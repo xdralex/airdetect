@@ -34,18 +34,41 @@ logging:
       level: WARNING
       stream: ext://sys.stdout
 
-    wheel5_out_handler:
-      class: wheel5.logutils.BetterFileHandler
-      formatter: file_formatter
-      level: DEBUG
-      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/wheel5.out
-      mode: w
-
     root_out_handler:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: INFO
       filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/root.out
+      mode: w
+
+    root_log_handler:
+      class: wheel5.logutils.BetterRotatingFileHandler
+      formatter: file_formatter
+      level: INFO
+      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/root.log
+      maxBytes: 134217728
+      backupCount: 8
+
+    pipeline_out_handler:
+      class: wheel5.logutils.BetterFileHandler
+      formatter: file_formatter
+      level: INFO
+      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/pipeline.out
+      mode: w
+
+    pipeline_log_handler:
+      class: wheel5.logutils.BetterRotatingFileHandler
+      formatter: file_formatter
+      level: INFO
+      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/pipeline.log
+      maxBytes: 134217728
+      backupCount: 8
+
+    wheel5_out_handler:
+      class: wheel5.logutils.BetterFileHandler
+      formatter: file_formatter
+      level: DEBUG
+      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/wheel5.out
       mode: w
 
     wheel5_log_handler:
@@ -56,22 +79,18 @@ logging:
       maxBytes: 134217728
       backupCount: 8
 
-    root_log_handler:
-      class: wheel5.logutils.BetterRotatingFileHandler
-      formatter: file_formatter
-      level: INFO
-      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/root.log
-      maxBytes: 134217728
-      backupCount: 8
+  root:
+    level: INFO
+    handlers: [root_out_handler, root_log_handler, console_handler]
 
   loggers:
+    pipeline.airliners:
+      level: INFO
+      handlers: [pipeline_out_handler, pipeline_log_handler, console_handler]
+
     wheel5:
       level: INFO
       handlers: [wheel5_out_handler, wheel5_log_handler, console_handler]
 
     wheel5.snapshotters:
       level: DEBUG
-
-  root:
-    level: INFO
-    handlers: [root_out_handler, root_log_handler, console_handler]

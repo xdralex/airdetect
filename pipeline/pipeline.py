@@ -37,7 +37,7 @@ class PipelineData(NamedTuple):
 
 
 def launch_tensorboard(tensorboard_root: str, port: int = 6006):
-    logger = logging.getLogger(f'airliners.pipeline')
+    logger = logging.getLogger(PIPELINE_LOGGER)
 
     tb = program.TensorBoard()
     tb.configure(argv=[None, '--bind_all', '--port', f'{port}',  '--logdir', tensorboard_root])
@@ -95,21 +95,21 @@ def load_data(datasets_config: Dict, db_config: Dict, grad_batch: int = 64, nogr
                         private_test=DataBundle(loader=private_test_loader, dataset=model_dataset, indices=private_test_indices))
 
 
-def split_eval_data(bundle: DataBundle, split: float, grad_batch: int = 64, nograd_batch: int = 256) -> (DataBundle, DataBundle):
+def split_eval_main_data(bundle: DataBundle, split: float, grad_batch: int = 64, nograd_batch: int = 256) -> (DataBundle, DataBundle):
     random_state = np.random.RandomState(42)
 
     eval_indices, main_indices = split_indices(bundle.indices, split=split, random_state=random_state)
 
-    main_sampler = SubsetRandomSampler(main_indices)
     eval_sampler = SubsetRandomSampler(eval_indices)
+    main_sampler = SubsetRandomSampler(main_indices)
 
-    main_loader = DataLoader(bundle.dataset, batch_size=grad_batch, sampler=main_sampler, num_workers=4, pin_memory=True)
     eval_loader = DataLoader(bundle.dataset, batch_size=nograd_batch, sampler=eval_sampler, num_workers=4, pin_memory=True)
+    main_loader = DataLoader(bundle.dataset, batch_size=grad_batch, sampler=main_sampler, num_workers=4, pin_memory=True)
 
-    main_bundle = DataBundle(loader=main_loader, dataset=bundle.dataset, indices=main_indices)
     eval_bundle = DataBundle(loader=eval_loader, dataset=bundle.dataset, indices=eval_indices)
+    main_bundle = DataBundle(loader=main_loader, dataset=bundle.dataset, indices=main_indices)
 
-    return main_bundle, eval_bundle
+    return eval_bundle, main_bundle
 
 
 def fit_resnet18(hparams: Dict[str, float], train_loader: DataLoader, val_loader: DataLoader, classes: int) -> Dict[str, float]:
@@ -169,38 +169,41 @@ def fit_resnet18(hparams: Dict[str, float], train_loader: DataLoader, val_loader
 
 
 # Pipeline
-with open('config.yaml', 'r') as config_file:
-    config = yaml.load(config_file, Loader=yaml.Loader)
+if __name__ == "__main__":
+    PIPELINE_LOGGER = 'pipeline.airliners'
 
-logutils.configure_logging(config['logging'])
-device = torch.device('cuda:0')
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
 
-org = Organizer(experiment='resnet18_hp1', **config['organizer'])
+    logutils.configure_logging(config['logging'])
+    device = torch.device('cuda:0')
 
-launch_tensorboard(org.tensorboard_root)
+    org = Organizer(experiment='resnet18_hp1', **config['organizer'])
 
-pipeline_data = load_data(config['datasets'], config['db'])
+    launch_tensorboard(org.tensorboard_experiment())
 
-stack_bundle, model_bundle = split_eval_data(pipeline_data.train, 0.1)
-val_bundle, train_bundle = split_eval_data(model_bundle, 0.2)
+    pipeline_data = load_data(config['datasets'], config['db'])
 
-
-def fit_trial_resnet18(hparams: Dict[str, float]):
-    results = fit_resnet18(hparams,
-                           train_loader=train_bundle.loader,
-                           val_loader=val_bundle.loader,
-                           classes=train_bundle.dataset.wrapped.classes())
-
-    return results['hp/best_val_loss']
+    stack_bundle, model_bundle = split_eval_main_data(pipeline_data.train, 0.1)
+    val_bundle, train_bundle = split_eval_main_data(model_bundle, 0.2)
 
 
-space = {
-    'resnet18': {
-        'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1)),
-        'wdA': hp.loguniform('wdA', math.log(1e-4), math.log(1)),
-        'lrB': hp.loguniform('lrB', math.log(1e-5), math.log(1)),
-        'wdB': hp.loguniform('wdB', math.log(1e-4), math.log(1))
+    def fit_trial_resnet18(hparams: Dict[str, float]):
+        results = fit_resnet18(hparams,
+                               train_loader=train_bundle.loader,
+                               val_loader=val_bundle.loader,
+                               classes=train_bundle.dataset.wrapped.classes())
+
+        return results['hp/best_val_loss']
+
+
+    space = {
+        'resnet18': {
+            'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1)),
+            'wdA': hp.loguniform('wdA', math.log(1e-4), math.log(1)),
+            'lrB': hp.loguniform('lrB', math.log(1e-5), math.log(1)),
+            'wdB': hp.loguniform('wdB', math.log(1e-4), math.log(1))
+        }
     }
-}
 
-best = fmin(fit_trial_resnet18, space=space['resnet18'], algo=hyperopt.rand.suggest, max_evals=30)
+    best = fmin(fit_trial_resnet18, space=space['resnet18'], algo=hyperopt.rand.suggest, max_evals=30)
