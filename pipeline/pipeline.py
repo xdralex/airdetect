@@ -1,19 +1,19 @@
 import logging
 import math
-from typing import Dict, NamedTuple, List
+from typing import Dict, NamedTuple, List, Union
 
 import hyperopt
 import numpy as np
 import torch
 import yaml
 from hyperopt import hp, fmin
+from tensorboard import program
 from torch import nn
 from torch import optim
 from torch.utils.data import Dataset
 from torch.utils.data import SubsetRandomSampler, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
-from tensorboard import program
 
 from data import load_aircraft_data
 from wheel5 import logutils
@@ -112,7 +112,13 @@ def split_eval_main_data(bundle: DataBundle, split: float, grad_batch: int = 64,
     return eval_bundle, main_bundle
 
 
-def fit_resnet18(hparams: Dict[str, float], train_loader: DataLoader, val_loader: DataLoader, classes: int) -> Dict[str, float]:
+def fit_resnet18(hparams: Dict[str, float],
+                 device: Union[torch.device, int],
+                 org: Organizer,
+                 train_loader: DataLoader,
+                 val_loader: DataLoader,
+                 classes: int) -> Dict[str, float]:
+
     # Model preparation
     model = torch.hub.load('pytorch/vision:v0.4.2', 'resnet18', pretrained=True, verbose=False)
 
@@ -140,11 +146,11 @@ def fit_resnet18(hparams: Dict[str, float], train_loader: DataLoader, val_loader
     tb_writer = SummaryWriter(tensorboard_dir, max_queue=100, flush_secs=60)
 
     metrics_df = fit(device, model, train_loader, val_loader, loss, optimizer,
-                     num_epochs=20,
+                     num_epochs=50,
                      snapshotter=[
-                         CheckpointSnapshotter(snapshot_dir, frequency=10),
-                         BestCVSnapshotter(snapshot_dir, metric_name='accuracy', asc=False, best=3),
-                         BestCVSnapshotter(snapshot_dir, metric_name='loss', asc=True, best=3),
+                         CheckpointSnapshotter(snapshot_dir, frequency=20),
+                         BestCVSnapshotter(snapshot_dir, metric_name='accuracy', asc=False, best=5),
+                         BestCVSnapshotter(snapshot_dir, metric_name='loss', asc=True, best=5),
                      ],
                      tb_writer=tb_writer,
                      display_progress=False)
@@ -190,6 +196,8 @@ if __name__ == "__main__":
 
     def fit_trial_resnet18(hparams: Dict[str, float]):
         results = fit_resnet18(hparams,
+                               device=device,
+                               org=org,
                                train_loader=train_bundle.loader,
                                val_loader=val_bundle.loader,
                                classes=train_bundle.dataset.wrapped.classes())
@@ -206,4 +214,6 @@ if __name__ == "__main__":
         }
     }
 
-    best = fmin(fit_trial_resnet18, space=space['resnet18'], algo=hyperopt.rand.suggest, max_evals=30)
+    best = fmin(fit_trial_resnet18, space=space['resnet18'], algo=hyperopt.rand.suggest, max_evals=200)
+
+    input("\nPipeline completed, press Enter to exit (this will terminate TensorBoard)\n")
