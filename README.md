@@ -1,8 +1,16 @@
-### arena-airliners
+Airliners classification with PyTorch.
 
-Airliners classification with PyTorch: 
-- training loop organization
-- hyperparameters selection
+#### Research:
 - transfer learning
 - augmentations
 - ensembling and stacking
+- hyperparameters selection
+- early stopping
+
+#### Engineering:
+- training loop organization
+- model snapshotting
+- metrics collection
+- restoring failed training
+- multiple GPU support
+- logging
