@@ -9,4 +9,4 @@ WORK=/home/apollo/package
 exec docker run --gpus all --shm-size=8192m --rm -u apollo -w $WORK \
   -p $TENSORBOARD_PORT:$TENSORBOARD_PORT \
 	-v "$PWD:$WORK" -v "/data/ssd:$WORK/data/ssd" -v "/data/nvme:$WORK/data/nvme" "$IMAGE" \
-	python3.7 ./pipeline.py
+	python3.7 pipeline/pipeline.py
