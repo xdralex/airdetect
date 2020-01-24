@@ -2,17 +2,12 @@ import re
 from contextlib import closing
 from typing import Dict
 
-import numpy as np
 import pandas as pd
 import psycopg2
 from psycopg2 import sql
 
-from numpy.random.mtrand import RandomState
 
-
-def load_aircraft_data(db_config: Dict, table_name: str = 'aircraft_photos', random_state: RandomState = None) -> pd.DataFrame:
-    random_state = random_state or np.random.RandomState()
-
+def load_aircraft_data(db_config: Dict[str, str], table_name: str = 'aircraft_photos') -> pd.DataFrame:
     # Aircraft type shortening
     airbus_pattern = re.compile(r'Airbus A?(?P<major>\d*)(?P<minor>-\d*)?\s*(\(.*\))?\Z')
     boeing_pattern = re.compile(r'Boeing B?(?P<major>\d*)(?P<minor>-\d*)?\s*(\(.*\))?\Z')
@@ -48,7 +43,7 @@ def load_aircraft_data(db_config: Dict, table_name: str = 'aircraft_photos', ran
             FROM {} ap
         ''').format(sql.Identifier(table_name)))
 
-        df_images = pd.DataFrame(c.fetchall(), columns=['name', 'path']).sample(frac=1, random_state=random_state)
+        df_images = pd.DataFrame(c.fetchall(), columns=['name', 'path'])
     conn.commit()
 
     df_images['name'] = df_images['name'].map(codename)

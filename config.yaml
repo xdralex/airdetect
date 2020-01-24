@@ -6,11 +6,15 @@ db:
   password: (3o2ob>pRNjE
 
 
-paths:
+organizer:
   tensorboard_root: /home/apollo/package/data/ssd/run/airlinersnet/tensorboard
   snapshot_root: /home/apollo/package/data/ssd/run/airlinersnet/snapshots
-  lmdb_dir: /home/apollo/package/data/ssd/run/airlinersnet/lmdb
-  dataset_dir: /home/apollo/package/data/ssd/datasets/airlinersnet  
+
+
+datasets:
+  original:
+    image_dir: /home/apollo/package/data/ssd/datasets/airlinersnet
+    lmdb_dir: /home/apollo/package/data/ssd/run/airlinersnet/lmdb
 
 
 logging:
