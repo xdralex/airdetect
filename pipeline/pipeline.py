@@ -40,7 +40,7 @@ def launch_tensorboard(tensorboard_root: str, port: int = 6006):
     logger = logging.getLogger(PIPELINE_LOGGER)
 
     tb = program.TensorBoard()
-    tb.configure(argv=[None, '--bind_all', '--port', f'{port}',  '--logdir', tensorboard_root])
+    tb.configure(argv=[None, '--bind_all', '--port', f'{port}', '--logdir', tensorboard_root])
     url = tb.launch()
 
     logger.info(f'Launched TensorBoard at {url}')
@@ -174,10 +174,7 @@ def fit_resnet18(hparams: Dict[str, float],
     return results
 
 
-# Pipeline
-if __name__ == "__main__":
-    PIPELINE_LOGGER = 'pipeline.airliners'
-
+def launch_pipeline():
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
 
@@ -193,7 +190,6 @@ if __name__ == "__main__":
     stack_bundle, model_bundle = split_eval_main_data(pipeline_data.train, 0.1)
     val_bundle, train_bundle = split_eval_main_data(model_bundle, 0.2)
 
-
     def fit_trial_resnet18(hparams: Dict[str, float]):
         results = fit_resnet18(hparams,
                                device=device,
@@ -204,7 +200,6 @@ if __name__ == "__main__":
 
         return results['hp/best_val_loss']
 
-
     space = {
         'resnet18': {
             'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1)),
@@ -214,6 +209,12 @@ if __name__ == "__main__":
         }
     }
 
-    best = fmin(fit_trial_resnet18, space=space['resnet18'], algo=hyperopt.rand.suggest, max_evals=200)
+    fmin(fit_trial_resnet18, space=space['resnet18'], algo=hyperopt.rand.suggest, max_evals=200)
+
+
+if __name__ == "__main__":
+    PIPELINE_LOGGER = 'pipeline.airliners'
+
+    launch_pipeline()
 
     input("\nPipeline completed, press Enter to exit (this will terminate TensorBoard)\n")
