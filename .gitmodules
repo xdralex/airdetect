@@ -1,0 +1,3 @@
+[submodule "packages/pytorch-wheel5"]
+	path = packages/pytorch-wheel5
+	url = git@github.com:xdralex/pytorch-wheel5.git
