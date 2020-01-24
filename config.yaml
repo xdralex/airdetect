@@ -1,0 +1,73 @@
+db:
+  host: 192.168.0.8
+  port: 5432
+  dbname: airlinersnet
+  user: airlinersnet
+  password: (3o2ob>pRNjE
+
+
+paths:
+  tensorboard_root: /home/apollo/package/data/ssd/run/airlinersnet/tensorboard
+  snapshot_root: /home/apollo/package/data/ssd/run/airlinersnet/snapshots
+  lmdb_dir: /home/apollo/package/data/ssd/run/airlinersnet/lmdb
+  dataset_dir: /home/apollo/package/data/ssd/datasets/airlinersnet  
+
+
+logging:
+  version: 1
+
+  formatters:
+    console_formatter:
+      format: '[%(name)s] - %(message)s'
+
+    file_formatter:
+      format: '%(asctime)s %(levelname)-8s [%(name)s] - %(message)s'
+
+  handlers:
+    console_handler:
+      class: logging.StreamHandler
+      formatter: console_formatter
+      level: WARNING
+      stream: ext://sys.stdout
+
+    wheel5_out_handler:
+      class: pytorch_wheel5.wheel5.logutils.BetterFileHandler
+      formatter: file_formatter
+      level: DEBUG
+      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/wheel5.out
+      mode: w
+
+    root_out_handler:
+      class: pytorch_wheel5.wheel5.logutils.BetterFileHandler
+      formatter: file_formatter
+      level: INFO
+      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/root.out
+      mode: w
+
+    wheel5_log_handler:
+      class: pytorch_wheel5.wheel5.logutils.BetterRotatingFileHandler
+      formatter: file_formatter
+      level: DEBUG
+      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/wheel5.log
+      maxBytes: 134217728
+      backupCount: 8
+
+    root_log_handler:
+      class: pytorch_wheel5.wheel5.logutils.BetterRotatingFileHandler
+      formatter: file_formatter
+      level: INFO
+      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/root.log
+      maxBytes: 134217728
+      backupCount: 8
+
+  loggers:
+    pytorch_wheel5.wheel5:
+      level: INFO
+      handlers: [wheel5_out_handler, wheel5_log_handler, console_handler]
+
+    pytorch_wheel5.wheel5.snapshotters:
+      level: DEBUG
+
+  root:
+    level: INFO
+    handlers: [root_out_handler, root_log_handler, console_handler]

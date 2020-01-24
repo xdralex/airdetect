@@ -1,0 +1,12 @@
+#!/bin/bash
+
+IMAGE=${1:-xdralex/dl-dev:latest}
+
+TENSORBOARD_PORT=6006
+
+WORK=/home/apollo/package
+
+exec docker run --gpus all --shm-size=8192m -i -t --rm -u apollo -w $WORK \
+  -p $TENSORBOARD_PORT:$TENSORBOARD_PORT \
+	-v "$PWD:$WORK" -v "/data/ssd:$WORK/data/ssd" -v "/data/nvme:$WORK/data/nvme" "$IMAGE" \
+	bash -c "echo \"PROMPT='%B%F{green}%n@%M%f%b %B%~%b %B%F{cyan}%#%f%b '\" >> ~/.zshrc && /usr/bin/zsh"
