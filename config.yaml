@@ -31,21 +31,21 @@ logging:
       stream: ext://sys.stdout
 
     wheel5_out_handler:
-      class: pytorch_wheel5.wheel5.logutils.BetterFileHandler
+      class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: DEBUG
       filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/wheel5.out
       mode: w
 
     root_out_handler:
-      class: pytorch_wheel5.wheel5.logutils.BetterFileHandler
+      class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: INFO
       filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/root.out
       mode: w
 
     wheel5_log_handler:
-      class: pytorch_wheel5.wheel5.logutils.BetterRotatingFileHandler
+      class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: DEBUG
       filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/wheel5.log
@@ -53,7 +53,7 @@ logging:
       backupCount: 8
 
     root_log_handler:
-      class: pytorch_wheel5.wheel5.logutils.BetterRotatingFileHandler
+      class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: INFO
       filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/root.log
@@ -61,11 +61,11 @@ logging:
       backupCount: 8
 
   loggers:
-    pytorch_wheel5.wheel5:
+    wheel5:
       level: INFO
       handlers: [wheel5_out_handler, wheel5_log_handler, console_handler]
 
-    pytorch_wheel5.wheel5.snapshotters:
+    wheel5.snapshotters:
       level: DEBUG
 
   root:

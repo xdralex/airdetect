@@ -11,14 +11,14 @@ from torch.utils.data import SubsetRandomSampler, DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
 
-from ..pytorch_wheel5.wheel5 import logutils
-from ..pytorch_wheel5.wheel5.dataset import LMDBImageDataset, WrappingTransformDataset, split_indices
-from ..pytorch_wheel5.wheel5.model import fit
-from ..pytorch_wheel5.wheel5.organizer import Organizer
-from ..pytorch_wheel5.wheel5.snapshotters import CheckpointSnapshotter, BestCVSnapshotter
-from ..pytorch_wheel5.wheel5.transforms import SquarePaddedResize
+from wheel5 import logutils
+from wheel5.dataset import LMDBImageDataset, WrappingTransformDataset, split_indices
+from wheel5.model import fit
+from wheel5.organizer import Organizer
+from wheel5.snapshotters import CheckpointSnapshotter, BestCVSnapshotter
+from wheel5.transforms import SquarePaddedResize
 
-from .data import load_aircraft_data
+from data import load_aircraft_data
 
 
 random_state = np.random.RandomState(42)
