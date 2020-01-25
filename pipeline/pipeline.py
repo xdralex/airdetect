@@ -148,8 +148,8 @@ def fit_resnet18(hparams: Dict[str, float],
                       hparams=hparams,
                       snapshotter=[
                           CheckpointSnapshotter(snapshot_dir, frequency=20),
-                          BestCVSnapshotter(snapshot_dir, metric_name='accuracy', asc=False, best=5),
-                          BestCVSnapshotter(snapshot_dir, metric_name='loss', asc=True, best=5)],
+                          BestCVSnapshotter(snapshot_dir, metric_name='accuracy', asc=False, top=5),
+                          BestCVSnapshotter(snapshot_dir, metric_name='loss', asc=True, top=5)],
                       tb_writer=tb_writer)
 
     fit(device, model, train_loader, val_loader, loss, optimizer, num_epochs=10,
@@ -182,7 +182,7 @@ def launch_pipeline():
     logutils.configure_logging(config['logging'])
     device = torch.device('cuda:0')
 
-    org = Organizer(experiment='resnet18_hp4', **config['organizer'])
+    org = Organizer(experiment='resnet18_hp6', **config['organizer'])
 
     launch_tensorboard(org.tensorboard_experiment())
 
