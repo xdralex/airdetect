@@ -20,7 +20,7 @@ from wheel5 import logutils
 from wheel5.dataset import LMDBImageDataset, WrappingTransformDataset, split_indices
 from wheel5.model import fit
 from wheel5.organizer import Organizer
-from wheel5.snapshotters import CheckpointSnapshotter, BestCVSnapshotter
+from wheel5.tracking import Tracker, CheckpointSnapshotter, BestCVSnapshotter
 from wheel5.transforms import SquarePaddedResize
 
 
@@ -118,7 +118,6 @@ def fit_resnet18(hparams: Dict[str, float],
                  train_loader: DataLoader,
                  val_loader: DataLoader,
                  classes: int) -> Dict[str, float]:
-
     # Model preparation
     model = torch.hub.load('pytorch/vision:v0.4.2', 'resnet18', pretrained=True, verbose=False)
 
@@ -145,17 +144,18 @@ def fit_resnet18(hparams: Dict[str, float],
 
     tb_writer = SummaryWriter(tensorboard_dir, max_queue=100, flush_secs=60)
 
-    metrics_df = fit(device, model, train_loader, val_loader, loss, optimizer,
-                     num_epochs=50,
-                     snapshotter=[
-                         CheckpointSnapshotter(snapshot_dir, frequency=20),
-                         BestCVSnapshotter(snapshot_dir, metric_name='accuracy', asc=False, best=5),
-                         BestCVSnapshotter(snapshot_dir, metric_name='loss', asc=True, best=5),
-                     ],
-                     tb_writer=tb_writer,
-                     display_progress=False)
+    tracker = Tracker(snapshot_dir,
+                      snapshotter=[
+                          CheckpointSnapshotter(snapshot_dir, frequency=20),
+                          BestCVSnapshotter(snapshot_dir, metric_name='accuracy', asc=False, best=5),
+                          BestCVSnapshotter(snapshot_dir, metric_name='loss', asc=True, best=5)],
+                      tb_writer=tb_writer)
+
+    fit(device, model, train_loader, val_loader, loss, optimizer, num_epochs=10,
+        tracker=tracker, display_progress=False)
 
     # Reporting
+    metrics_df = tracker.metrics_df
     results = {
         'hp/best_val_acc': metrics_df['val_accuracy'].max(),
         'hp/best_val_loss': metrics_df['val_loss'].min(),
@@ -181,7 +181,7 @@ def launch_pipeline():
     logutils.configure_logging(config['logging'])
     device = torch.device('cuda:0')
 
-    org = Organizer(experiment='resnet18_hp1', **config['organizer'])
+    org = Organizer(experiment='resnet18_hp2', **config['organizer'])
 
     launch_tensorboard(org.tensorboard_experiment())
 
@@ -209,7 +209,7 @@ def launch_pipeline():
         }
     }
 
-    fmin(fit_trial_resnet18, space=space['resnet18'], algo=hyperopt.rand.suggest, max_evals=200)
+    fmin(fit_trial_resnet18, space=space['resnet18'], algo=hyperopt.rand.suggest, max_evals=10)
 
 
 if __name__ == "__main__":
