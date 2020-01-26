@@ -182,7 +182,7 @@ def launch_pipeline():
     logutils.configure_logging(config['logging'])
     device = torch.device('cuda:0')
 
-    org = Organizer(experiment='resnet18_hp6', **config['organizer'])
+    org = Organizer(experiment='resnet18_hp9', **config['organizer'])
 
     launch_tensorboard(org.tensorboard_experiment())
 

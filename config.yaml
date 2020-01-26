@@ -90,7 +90,7 @@ logging:
 
     wheel5:
       level: INFO
-      handlers: [wheel5_out_handler, wheel5_log_handler, console_handler]
+      handlers: [wheel5_out_handler, wheel5_log_handler, pipeline_out_handler, pipeline_log_handler, console_handler]
 
-    wheel5.snapshotters:
+    wheel5.tracking:
       level: DEBUG
