@@ -1,3 +1,4 @@
+import click
 import logging
 import math
 from typing import Dict, NamedTuple, List, Union
@@ -117,7 +118,8 @@ def fit_resnet18(hparams: Dict[str, float],
                  tracker: Tracker,
                  train_loader: DataLoader,
                  val_loader: DataLoader,
-                 classes: int) -> Dict[str, float]:
+                 classes: int,
+                 max_epochs: int) -> Dict[str, float]:
     # Model preparation
     model = torch.hub.load('pytorch/vision:v0.4.2', 'resnet18', pretrained=True, verbose=False)
 
@@ -139,7 +141,7 @@ def fit_resnet18(hparams: Dict[str, float],
 
     # Training setup
     trial_tracker = tracker.new_trial(hparams)
-    fit(device, model, train_loader, val_loader, loss, optimizer, num_epochs=10, tracker=trial_tracker, display_progress=False)
+    fit(device, model, train_loader, val_loader, loss, optimizer, num_epochs=max_epochs, tracker=trial_tracker, display_progress=False)
 
     # Reporting
     metrics_df = trial_tracker.metrics_df
@@ -159,8 +161,34 @@ def fit_resnet18(hparams: Dict[str, float],
     return results
 
 
-def launch_pipeline(config: Dict, device: Union[torch.device, int], snapshot_cfg: SnapshotConfig, tensorboard_cfg: TensorboardConfig):
-    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment='resnet18_hp11')
+def snapshot_config(config: Dict) -> SnapshotConfig:
+    return SnapshotConfig(root_dir=config['tracker']['snapshot_root'],
+                          snapshotters=[
+                              CheckpointSnapshotter(frequency=20),
+                              BestCVSnapshotter(metric_name='acc', asc=False, top=5),
+                              BestCVSnapshotter(metric_name='loss', asc=True, top=5)])
+
+
+def tensorboard_config(config: Dict) -> TensorboardConfig:
+    return TensorboardConfig(root_dir=config['tracker']['tensorboard_root'])
+
+
+@click.command(name='search')
+@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
+@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
+@click.option('-t', '--trials', 'trials', required=True, help='number of trials to perform', type=int)
+@click.option('-m', '--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
+def search(experiment: str, device_name: str, trials: int, max_epochs: int):
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
+
+    device = torch.device(device_name)
+
+    snapshot_cfg = snapshot_config(config)
+    tensorboard_cfg = tensorboard_config(config)
+
+    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment)
     launch_tensorboard(tracker.tensorboard_dir)
 
     pipeline_data = load_data(config['datasets'], config['db'])
@@ -174,7 +202,8 @@ def launch_pipeline(config: Dict, device: Union[torch.device, int], snapshot_cfg
                                tracker=tracker,
                                train_loader=train_bundle.loader,
                                val_loader=val_bundle.loader,
-                               classes=train_bundle.dataset.wrapped.classes())
+                               classes=train_bundle.dataset.wrapped.classes(),
+                               max_epochs=max_epochs)
 
         return results['hp/best_val_loss']
 
@@ -187,14 +216,19 @@ def launch_pipeline(config: Dict, device: Union[torch.device, int], snapshot_cfg
         }
     }
 
-    fmin(fit_trial_resnet18, space=space['resnet18'], algo=hyperopt.rand.suggest, max_evals=10)
+    fmin(fit_trial_resnet18, space=space['resnet18'], algo=hyperopt.rand.suggest, max_evals=trials)
 
     input("\nPipeline completed, press Enter to exit (this will terminate TensorBoard)\n")
 
 
-def load_results(config: Dict, device: Union[torch.device, int], snapshot_cfg: SnapshotConfig):
+@click.command(name='evaluate')
+@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
+@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
+@click.option('--top', 'top', default=10, help='number of best trials to show', type=int)
+def evaluate(experiment: str, device_name: str, top: int):
     def dump(df: pd.DataFrame) -> str:
         df = df.drop(columns=['experiment', 'trial', 'time', 'directory'])
+        df = df.head(top)
         return tabulate(df, headers="keys", showindex=False, tablefmt='github')
 
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
@@ -202,7 +236,15 @@ def load_results(config: Dict, device: Union[torch.device, int], snapshot_cfg: S
         metric_asc = False
         return df.sort_values(by=metric_name, ascending=metric_asc)
 
-    df_res = Tracker.load_stats(snapshot_cfg, 'resnet18_hp11')
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
+
+    device = torch.device(device_name)
+
+    snapshot_cfg = snapshot_config(config)
+
+    df_res = Tracker.load_stats(snapshot_cfg, experiment)
     df_snap = df_res[df_res['snapshot'] != '']
 
     df_final = metric_sort(df_snap[df_snap['epoch'] == df_snap['num_epochs']])
@@ -221,26 +263,14 @@ def load_results(config: Dict, device: Union[torch.device, int], snapshot_cfg: S
     print(score(device, model, pipeline_data.public_test.loader, loss))
 
 
-def main():
-    with open('config.yaml', 'r') as config_file:
-        config = yaml.load(config_file, Loader=yaml.Loader)
-
-    logutils.configure_logging(config['logging'])
-    device = torch.device('cuda:0')
-
-    snapshot_cfg = SnapshotConfig(root_dir=config['tracker']['snapshot_root'],
-                                  snapshotters=[
-                                      CheckpointSnapshotter(frequency=20),
-                                      BestCVSnapshotter(metric_name='acc', asc=False, top=5),
-                                      BestCVSnapshotter(metric_name='loss', asc=True, top=5)])
-
-    tensorboard_cfg = TensorboardConfig(root_dir=config['tracker']['tensorboard_root'])
-
-    # launch_pipeline(config, device, snapshot_cfg, tensorboard_cfg)
-    load_results(config, device, snapshot_cfg)
+@click.group()
+def cli():
+    pass
 
 
 if __name__ == "__main__":
     PIPELINE_LOGGER = 'pipeline.airliners'
 
-    main()
+    cli.add_command(search)
+    cli.add_command(evaluate)
+    cli()
