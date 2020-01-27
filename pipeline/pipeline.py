@@ -1,7 +1,7 @@
 import click
 import logging
 import math
-from typing import Dict, NamedTuple, List, Union
+from typing import Dict, NamedTuple, List, Union, Optional
 
 import hyperopt
 import numpy as np
@@ -18,6 +18,7 @@ from torch.utils.data import SubsetRandomSampler, DataLoader
 from torchvision import transforms
 from wheel5 import logutils
 from wheel5.dataset import LMDBImageDataset, WrappingTransformDataset, split_indices
+from wheel5.nn import AverageModel
 from wheel5.model import fit, score
 from wheel5.tracking import Tracker, Snapshotter, CheckpointSnapshotter, BestCVSnapshotter, SnapshotConfig, TensorboardConfig
 from wheel5.transforms import SquarePaddedResize
@@ -173,12 +174,23 @@ def tensorboard_config(config: Dict) -> TensorboardConfig:
     return TensorboardConfig(root_dir=config['tracker']['tensorboard_root'])
 
 
+def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[str]] = None) -> str:
+    if drop_cols is None:
+        drop_cols = ['experiment', 'trial', 'time', 'directory']
+
+    df = df.drop(columns=drop_cols)
+    if top:
+        df = df.head(top)
+
+    return tabulate(df, headers="keys", showindex=False, tablefmt='github')
+
+
 @click.command(name='search')
 @click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
 @click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
 @click.option('-t', '--trials', 'trials', required=True, help='number of trials to perform', type=int)
 @click.option('-m', '--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
-def search(experiment: str, device_name: str, trials: int, max_epochs: int):
+def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
@@ -221,46 +233,86 @@ def search(experiment: str, device_name: str, trials: int, max_epochs: int):
     input("\nPipeline completed, press Enter to exit (this will terminate TensorBoard)\n")
 
 
-@click.command(name='evaluate')
+@click.command(name='evaluate-top')
 @click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
 @click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
-@click.option('--top', 'top', default=10, help='number of best trials to show', type=int)
-def evaluate(experiment: str, device_name: str, top: int):
-    def dump(df: pd.DataFrame) -> str:
-        df = df.drop(columns=['experiment', 'trial', 'time', 'directory'])
-        df = df.head(top)
-        return tabulate(df, headers="keys", showindex=False, tablefmt='github')
-
+@click.option('--kind', 'kind', required=True, type=click.Choice(['final', 'best']), help='use final/best models')
+@click.option('--top', 'top', default=1, help='number of best models to use', type=int)
+@click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
+@click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
+def cli_evaluate_top(experiment: str, device_name: str, kind: str, top: int, metric_name: str, order: str):
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
-        metric_name = 'val_acc'
-        metric_asc = False
-        return df.sort_values(by=metric_name, ascending=metric_asc)
+        return df.sort_values(by=metric_name, ascending=(order == 'asc'))
 
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
-        logutils.configure_logging(config['logging'])
 
     device = torch.device(device_name)
 
     snapshot_cfg = snapshot_config(config)
-
     df_res = Tracker.load_stats(snapshot_cfg, experiment)
-    df_snap = df_res[df_res['snapshot'] != '']
 
-    df_final = metric_sort(df_snap[df_snap['epoch'] == df_snap['num_epochs']])
-    df_best = metric_sort(df_snap.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
+    if kind == 'final':
+        df_model = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
+    elif kind == 'best':
+        df_model = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
+    else:
+        raise click.BadOptionUsage('kind', f'Unsupported kind option: "{kind}"')
 
-    print(f'Final results by trial: \n\n{dump(df_final)}\n\n\n')
-    print(f'Best results by trial: \n\n{dump(df_best)}\n\n\n')
+    df_top_models = df_model.head(top)
+    print(f'Averaging top models: \n\n{dump(df_top_models)}\n\n\n')
 
-    row = df_final.head(1).to_dict(orient='records')[0]
-    snapshot = Snapshotter.load_snapshot(row['directory'], row['snapshot'])
+    models = []
+    loss = None
+    for row in df_top_models.head(top).itertuples():
+        snapshot = Snapshotter.load_snapshot(row.directory, row.snapshot)
+        models.append(snapshot.model)
+        loss = snapshot.loss
+
+    final_model = AverageModel(models)
 
     pipeline_data = load_data(config['datasets'], config['db'])
-    model = snapshot.model
-    loss = snapshot.loss
-    model.to(device)
-    print(score(device, model, pipeline_data.public_test.loader, loss))
+    final_model.to(device)
+    print(score(device, final_model, pipeline_data.public_test.loader, loss))
+
+
+@click.command(name='list-top')
+@click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
+@click.option('--top', 'top', default=10, type=int, help='number of top trials to show (default: 10')
+@click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
+@click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
+def cli_list_top(experiment: str, top: int, metric_name: str, order: str):
+    def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
+        return df.sort_values(by=metric_name, ascending=(order == 'asc'))
+
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+
+    snapshot_cfg = snapshot_config(config)
+    df_res = Tracker.load_stats(snapshot_cfg, experiment)
+
+    df_final = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
+    print(f'Final results by trial: \n\n{dump(df_final, top=top)}\n\n\n')
+
+    df_best = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
+    print(f'Best results by trial: \n\n{dump(df_best, top=top)}\n\n\n')
+
+
+@click.command(name='list-entries')
+@click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
+@click.option('--all/--snap', 'list_all', default=True, help='list all entries (default) / only entries with snapshots')
+def cli_list_entries(experiment: str, list_all: bool):
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+
+    snapshot_cfg = snapshot_config(config)
+    df_res = Tracker.load_stats(snapshot_cfg, experiment)
+
+    if list_all:
+        print(f'Results: \n\n{dump(df_res)}\n\n\n')
+    else:
+        df_snap = df_res[df_res['snapshot'] != '']
+        print(f'Results with snapshots: \n\n{dump(df_snap)}\n\n\n')
 
 
 @click.group()
@@ -271,6 +323,8 @@ def cli():
 if __name__ == "__main__":
     PIPELINE_LOGGER = 'pipeline.airliners'
 
-    cli.add_command(search)
-    cli.add_command(evaluate)
+    cli.add_command(cli_search)
+    cli.add_command(cli_evaluate_top)
+    cli.add_command(cli_list_top)
+    cli.add_command(cli_list_entries)
     cli()
