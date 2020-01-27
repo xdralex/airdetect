@@ -7,21 +7,20 @@ import numpy as np
 import torch
 import yaml
 from hyperopt import hp, fmin
+from tabulate import tabulate
 from tensorboard import program
 from torch import nn
 from torch import optim
 from torch.utils.data import Dataset
 from torch.utils.data import SubsetRandomSampler, DataLoader
-from torch.utils.tensorboard import SummaryWriter
 from torchvision import transforms
-
-from data import load_aircraft_data
 from wheel5 import logutils
 from wheel5.dataset import LMDBImageDataset, WrappingTransformDataset, split_indices
 from wheel5.model import fit
-from wheel5.organizer import Organizer
-from wheel5.tracking import Tracker, CheckpointSnapshotter, BestCVSnapshotter
+from wheel5.tracking import Tracker, CheckpointSnapshotter, BestCVSnapshotter, SnapshotConfig, TensorboardConfig
 from wheel5.transforms import SquarePaddedResize
+
+from data import load_aircraft_data
 
 
 class DataBundle(NamedTuple):
@@ -114,7 +113,7 @@ def split_eval_main_data(bundle: DataBundle, split: float, grad_batch: int = 64,
 
 def fit_resnet18(hparams: Dict[str, float],
                  device: Union[torch.device, int],
-                 org: Organizer,
+                 tracker: Tracker,
                  train_loader: DataLoader,
                  val_loader: DataLoader,
                  classes: int) -> Dict[str, float]:
@@ -138,25 +137,11 @@ def fit_resnet18(hparams: Dict[str, float],
     optimizer = optim.AdamW(optimizer_params)
 
     # Training setup
-    org_trial = org.new_trial(hparams=hparams)
-    snapshot_dir = org_trial.snapshot_dir()
-    tensorboard_dir = org_trial.tensorboard_dir()
-
-    tb_writer = SummaryWriter(tensorboard_dir, max_queue=100, flush_secs=60)
-
-    tracker = Tracker(snapshot_dir,
-                      hparams=hparams,
-                      snapshotter=[
-                          CheckpointSnapshotter(snapshot_dir, frequency=20),
-                          BestCVSnapshotter(snapshot_dir, metric_name='accuracy', asc=False, top=5),
-                          BestCVSnapshotter(snapshot_dir, metric_name='loss', asc=True, top=5)],
-                      tb_writer=tb_writer)
-
-    fit(device, model, train_loader, val_loader, loss, optimizer, num_epochs=10,
-        tracker=tracker, display_progress=False)
+    trial_tracker = tracker.new_trial(hparams)
+    fit(device, model, train_loader, val_loader, loss, optimizer, num_epochs=10, tracker=trial_tracker, display_progress=False)
 
     # Reporting
-    metrics_df = tracker.metrics_df
+    metrics_df = trial_tracker.metrics_df
     results = {
         'hp/best_val_acc': metrics_df['val_accuracy'].max(),
         'hp/best_val_loss': metrics_df['val_loss'].min(),
@@ -168,23 +153,15 @@ def fit_resnet18(hparams: Dict[str, float],
         'hp/final_train_acc': metrics_df['train_accuracy'].iloc[-1],
         'hp/final_train_loss': metrics_df['train_loss'].iloc[-1],
     }
-
-    tb_writer.add_hparams(hparams, results)
-    tb_writer.flush()
+    trial_tracker.trial_completed(results)
 
     return results
 
 
-def launch_pipeline():
-    with open('config.yaml', 'r') as config_file:
-        config = yaml.load(config_file, Loader=yaml.Loader)
+def launch_pipeline(config: Dict, snapshot_cfg: SnapshotConfig, tensorboard_cfg: TensorboardConfig, device: Union[torch.device, int]):
+    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment='resnet18_hp10')
 
-    logutils.configure_logging(config['logging'])
-    device = torch.device('cuda:0')
-
-    org = Organizer(experiment='resnet18_hp9', **config['organizer'])
-
-    launch_tensorboard(org.tensorboard_experiment())
+    launch_tensorboard(tracker.tensorboard_dir)
 
     pipeline_data = load_data(config['datasets'], config['db'])
 
@@ -194,7 +171,7 @@ def launch_pipeline():
     def fit_trial_resnet18(hparams: Dict[str, float]):
         results = fit_resnet18(hparams,
                                device=device,
-                               org=org,
+                               tracker=tracker,
                                train_loader=train_bundle.loader,
                                val_loader=val_bundle.loader,
                                classes=train_bundle.dataset.wrapped.classes())
@@ -213,9 +190,36 @@ def launch_pipeline():
     fmin(fit_trial_resnet18, space=space['resnet18'], algo=hyperopt.rand.suggest, max_evals=10)
 
 
+def load_results(snapshot_cfg: SnapshotConfig):
+    df = Tracker.load_stats(snapshot_cfg, 'resnet18_hp10')
+    df = df.drop(columns=['experiment', 'trial', 'time', 'directory'])
+    df_dump = tabulate(df, headers="keys", showindex=False, tablefmt='github')
+
+    print(df_dump)
+
+
+def main():
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+
+    logutils.configure_logging(config['logging'])
+    device = torch.device('cuda:0')
+
+    snapshot_cfg = SnapshotConfig(root_dir=config['tracker']['snapshot_root'],
+                                  snapshotters=[
+                                      CheckpointSnapshotter(frequency=20),
+                                      BestCVSnapshotter(metric_name='accuracy', asc=False, top=5),
+                                      BestCVSnapshotter(metric_name='loss', asc=True, top=5)])
+
+    tensorboard_cfg = TensorboardConfig(root_dir=config['tracker']['tensorboard_root'])
+
+    # launch_pipeline(config, snapshot_cfg, tensorboard_cfg, device)
+    load_results(snapshot_cfg)
+
+
 if __name__ == "__main__":
     PIPELINE_LOGGER = 'pipeline.airliners'
 
-    launch_pipeline()
+    main()
 
     input("\nPipeline completed, press Enter to exit (this will terminate TensorBoard)\n")

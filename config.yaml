@@ -6,7 +6,7 @@ db:
   password: (3o2ob>pRNjE
 
 
-organizer:
+tracker:
   tensorboard_root: /home/apollo/package/data/ssd/run/airlinersnet/tensorboard
   snapshot_root: /home/apollo/package/data/ssd/run/airlinersnet/snapshots
 
