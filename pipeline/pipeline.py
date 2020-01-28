@@ -287,11 +287,14 @@ def cli_list_top(experiment: str, top: int, metric_name: str, order: str):
     snapshot_cfg = snapshot_config(config)
     df_res = Tracker.load_stats(snapshot_cfg, experiment)
 
-    df_final = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
-    print(f'Final results by trial: \n\n{dump(df_final, top=top)}\n\n\n')
+    if df_res is None:
+        print('No completed trials found')
+    else:
+        df_final = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
+        print(f'Final results by trial: \n\n{dump(df_final, top=top)}\n\n\n')
 
-    df_best = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
-    print(f'Best results by trial: \n\n{dump(df_best, top=top)}\n\n\n')
+        df_best = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
+        print(f'Best results by trial: \n\n{dump(df_best, top=top)}\n\n\n')
 
 
 @click.command(name='list-entries')
@@ -304,11 +307,14 @@ def cli_list_entries(experiment: str, list_all: bool):
     snapshot_cfg = snapshot_config(config)
     df_res = Tracker.load_stats(snapshot_cfg, experiment)
 
-    if list_all:
-        print(f'Results: \n\n{dump(df_res)}\n\n\n')
+    if df_res is None:
+        print('No completed trials found')
     else:
-        df_snap = df_res[df_res['snapshot'] != '']
-        print(f'Results with snapshots: \n\n{dump(df_snap)}\n\n\n')
+        if list_all:
+            print(f'Results: \n\n{dump(df_res)}\n\n\n')
+        else:
+            df_snap = df_res[df_res['snapshot'] != '']
+            print(f'Results with snapshots: \n\n{dump(df_snap)}\n\n\n')
 
 
 @click.group()
