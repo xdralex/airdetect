@@ -1,5 +1,8 @@
 #!/bin/bash
 
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+DIR=$DIR/..
+
 IMAGE=xdralex/dl-dev:latest
 WORK=/home/apollo/package
 
@@ -7,16 +10,22 @@ if [[ "$1" == "--tensorboard" ]]
 then
   CONT_TENSORBOARD_PORT=6006
   HOST_TENSORBOARD_PORT=$2
-  PORT_BINDING="-p $HOST_TENSORBOARD_PORT:$CONT_TENSORBOARD_PORT -p $JUPYTER_PORT:$JUPYTER_PORT"
+  PORT_BINDING="-p $HOST_TENSORBOARD_PORT:$CONT_TENSORBOARD_PORT"
   shift; shift
-else
-  PORT_BINDING=""
 fi
 
-exec docker run --gpus all --shm-size=8192m --rm -u apollo -w $WORK $PORT_BINDING \
+CONT_JUPYTER_PORT=4004
+HOST_JUPYTER_PORT=4004
+PORT_BINDING="$PORT_BINDING -p $HOST_JUPYTER_PORT:$CONT_JUPYTER_PORT"
+
+pushd "$DIR" > /dev/null || exit
+
+docker run --gpus all --shm-size=8192m --rm -u apollo -w $WORK "$PORT_BINDING" \
         -v "$PWD:$WORK" -v "/data/ssd:$WORK/data/ssd" -v "/data/nvme:$WORK/data/nvme" "$IMAGE" \
         jupyter-notebook \
         --NotebookApp.notebook_dir=$WORK \
-        --NotebookApp.ip=0.0.0.0 --NotebookApp.port=$JUPYTER_PORT \
+        --NotebookApp.ip=0.0.0.0 --NotebookApp.port="$JUPYTER_PORT" \
         --NotebookApp.password_required=False --NotebookApp.token='' \
         --NotebookApp.custom_display_url="http://localhost:$JUPYTER_PORT"
+
+popd > /dev/null || exit
