@@ -20,11 +20,11 @@ PORT_BINDING="$PORT_BINDING -p $HOST_JUPYTER_PORT:$CONT_JUPYTER_PORT"
 
 pushd "$DIR" > /dev/null || exit
 
-docker run --gpus all --shm-size=8192m --rm -u apollo -w $WORK "$PORT_BINDING" \
+docker run --gpus all --shm-size=8192m --rm -u apollo -w $WORK $PORT_BINDING \
         -v "$PWD:$WORK" -v "/data/ssd:$WORK/data/ssd" -v "/data/nvme:$WORK/data/nvme" "$IMAGE" \
         jupyter-notebook \
         --NotebookApp.notebook_dir=$WORK \
-        --NotebookApp.ip=0.0.0.0 --NotebookApp.port="$JUPYTER_PORT" \
+        --NotebookApp.ip=0.0.0.0 --NotebookApp.port=$CONT_JUPYTER_PORT \
         --NotebookApp.password_required=False --NotebookApp.token='' \
         --NotebookApp.custom_display_url="http://localhost:$JUPYTER_PORT"
 
