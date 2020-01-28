@@ -46,13 +46,21 @@ def launch_tensorboard(tensorboard_root: str, port: int = 6006):
     logger.info(f'Launched TensorBoard at {url}')
 
 
-def load_image_dataset(config: Dict[str, str]) -> LMDBImageDataset:
+def load_image_dataset(config: Dict[str, str], augment: bool = False) -> LMDBImageDataset:
     df_images = pd.read_csv(filepath_or_buffer=config['dataframe'], sep=',', header=0)
+
+    if augment:
+        getitem_transform = transforms.Compose([
+            transforms.RandomHorizontalFlip()
+        ])
+    else:
+        getitem_transform = None
 
     return LMDBImageDataset.cached(df_images,
                                    image_dir=config['image_dir'],
                                    lmdb_path=config['lmdb_dir'],
-                                   prepare_transform=SquarePaddedResize(size=224))
+                                   prepare_transform=SquarePaddedResize(size=224),
+                                   getitem_transform=getitem_transform)
 
 
 def wrap_model_dataset(dataset: Dataset) -> WrappingTransformDataset:
@@ -72,7 +80,7 @@ def wrap_model_dataset(dataset: Dataset) -> WrappingTransformDataset:
 
 
 def load_data(datasets_config: Dict, grad_batch: int = 64, nograd_batch: int = 256) -> PipelineData:
-    train_dataset = wrap_model_dataset(load_image_dataset(datasets_config['train']))
+    train_dataset = wrap_model_dataset(load_image_dataset(datasets_config['train'], augment=True))
     public_test_dataset = wrap_model_dataset(load_image_dataset(datasets_config['public_test']))
     private_test_dataset = wrap_model_dataset(load_image_dataset(datasets_config['private_test']))
 

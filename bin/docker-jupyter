@@ -26,6 +26,6 @@ docker run --gpus all --shm-size=8192m --rm -u apollo -w $WORK $PORT_BINDING \
         --NotebookApp.notebook_dir=$WORK \
         --NotebookApp.ip=0.0.0.0 --NotebookApp.port=$CONT_JUPYTER_PORT \
         --NotebookApp.password_required=False --NotebookApp.token='' \
-        --NotebookApp.custom_display_url="http://localhost:$JUPYTER_PORT"
+        --NotebookApp.custom_display_url="http://localhost:$HOST_JUPYTER_PORT"
 
 popd > /dev/null || exit
