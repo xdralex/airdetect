@@ -199,7 +199,7 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
     tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment)
     launch_tensorboard(tracker.tensorboard_dir)
 
-    pipeline_data = load_data(config['datasets'], config['db'])
+    pipeline_data = load_data(config['datasets'])
 
     stack_bundle, model_bundle = split_eval_main_data(pipeline_data.train, 0.1)
     val_bundle, train_bundle = split_eval_main_data(model_bundle, 0.2)
@@ -267,7 +267,7 @@ def cli_evaluate_top(experiment: str, device_name: str, kind: str, top: int, met
 
     final_model = AverageModel(models)
 
-    pipeline_data = load_data(config['datasets'], config['db'])
+    pipeline_data = load_data(config['datasets'])
     final_model.to(device)
     print(score(device, final_model, pipeline_data.public_test.loader, loss))
 
