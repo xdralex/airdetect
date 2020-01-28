@@ -23,8 +23,6 @@ from wheel5.model import fit, score
 from wheel5.tracking import Tracker, Snapshotter, CheckpointSnapshotter, BestCVSnapshotter, SnapshotConfig, TensorboardConfig
 from wheel5.transforms import SquarePaddedResize
 
-from data import load_aircraft_data
-
 
 class DataBundle(NamedTuple):
     loader: DataLoader
@@ -48,12 +46,12 @@ def launch_tensorboard(tensorboard_root: str, port: int = 6006):
     logger.info(f'Launched TensorBoard at {url}')
 
 
-def load_image_dataset(dataset_config: Dict[str, str], db_config: Dict[str, str]) -> LMDBImageDataset:
-    df_images = load_aircraft_data(db_config, 'aircraft_photos_snapshot')
+def load_image_dataset(config: Dict[str, str]) -> LMDBImageDataset:
+    df_images = pd.read_csv(filepath_or_buffer=config['dataframe'], sep=',', header=0)
 
     return LMDBImageDataset.cached(df_images,
-                                   image_dir=dataset_config['image_dir'],
-                                   lmdb_path=dataset_config['lmdb_dir'],
+                                   image_dir=config['image_dir'],
+                                   lmdb_path=config['lmdb_dir'],
                                    prepare_transform=SquarePaddedResize(size=224))
 
 
@@ -73,28 +71,26 @@ def wrap_model_dataset(dataset: Dataset) -> WrappingTransformDataset:
     )
 
 
-# FIXME: train and test should be stored and loaded separately from the very beginning
-def load_data(datasets_config: Dict, db_config: Dict, grad_batch: int = 64, nograd_batch: int = 256) -> PipelineData:
-    image_dataset = load_image_dataset(datasets_config['original'], db_config)
-    model_dataset = wrap_model_dataset(image_dataset)
+def load_data(datasets_config: Dict, grad_batch: int = 64, nograd_batch: int = 256) -> PipelineData:
+    train_dataset = wrap_model_dataset(load_image_dataset(datasets_config['train']))
+    public_test_dataset = wrap_model_dataset(load_image_dataset(datasets_config['public_test']))
+    private_test_dataset = wrap_model_dataset(load_image_dataset(datasets_config['private_test']))
 
-    random_state = np.random.RandomState(42)
-    indices = list(range(len(model_dataset)))
-
-    test_indices, train_indices = split_indices(indices, split=0.25, random_state=random_state)
-    public_test_indices, private_test_indices = split_indices(test_indices, split=0.5, random_state=random_state)
+    train_indices = list(range(len(train_dataset)))
+    public_test_indices = list(range(len(public_test_dataset)))
+    private_test_indices = list(range(len(private_test_dataset)))
 
     train_sampler = SubsetRandomSampler(train_indices)
     public_test_sampler = SubsetRandomSampler(public_test_indices)
     private_test_sampler = SubsetRandomSampler(private_test_indices)
 
-    train_loader = DataLoader(model_dataset, batch_size=grad_batch, sampler=train_sampler, num_workers=4, pin_memory=True)
-    public_test_loader = DataLoader(model_dataset, batch_size=nograd_batch, sampler=public_test_sampler, num_workers=4, pin_memory=True)
-    private_test_loader = DataLoader(model_dataset, batch_size=nograd_batch, sampler=private_test_sampler, num_workers=4, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=grad_batch, sampler=train_sampler, num_workers=4, pin_memory=True)
+    public_test_loader = DataLoader(public_test_dataset, batch_size=nograd_batch, sampler=public_test_sampler, num_workers=4, pin_memory=True)
+    private_test_loader = DataLoader(private_test_dataset, batch_size=nograd_batch, sampler=private_test_sampler, num_workers=4, pin_memory=True)
 
-    return PipelineData(train=DataBundle(loader=train_loader, dataset=model_dataset, indices=train_indices),
-                        public_test=DataBundle(loader=public_test_loader, dataset=model_dataset, indices=public_test_indices),
-                        private_test=DataBundle(loader=private_test_loader, dataset=model_dataset, indices=private_test_indices))
+    return PipelineData(train=DataBundle(loader=train_loader, dataset=train_dataset, indices=train_indices),
+                        public_test=DataBundle(loader=public_test_loader, dataset=public_test_dataset, indices=public_test_indices),
+                        private_test=DataBundle(loader=private_test_loader, dataset=private_test_dataset, indices=private_test_indices))
 
 
 def split_eval_main_data(bundle: DataBundle, split: float, grad_batch: int = 64, nograd_batch: int = 256) -> (DataBundle, DataBundle):

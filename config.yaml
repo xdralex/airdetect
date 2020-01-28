@@ -1,20 +1,23 @@
-db:
-  host: 192.168.0.8
-  port: 5432
-  dbname: airlinersnet
-  user: airlinersnet
-  password: (3o2ob>pRNjE
-
-
 tracker:
-  tensorboard_root: /home/apollo/package/data/ssd/run/airlinersnet/tensorboard
-  snapshot_root: /home/apollo/package/data/ssd/run/airlinersnet/snapshots
+  tensorboard_root: /data/ssd/run/airliners/tensorboard
+  snapshot_root: /data/ssd/run/airliners/snapshots
 
 
 datasets:
-  original:
-    image_dir: /home/apollo/package/data/ssd/datasets/airlinersnet
-    lmdb_dir: /home/apollo/package/data/ssd/run/airlinersnet/lmdb
+  train:
+    image_dir: /data/ssd/datasets/airliners/train
+    lmdb_dir: /data/ssd/run/airliners/lmdb/train
+    dataframe: /data/ssd/datasets/airliners/train.csv
+
+  public_test:
+    image_dir: /data/ssd/datasets/airliners/public_test
+    lmdb_dir: /data/ssd/run/airliners/lmdb/public_test
+    dataframe: /data/ssd/datasets/airliners/public_test.csv
+
+  private_test:
+    image_dir: /data/ssd/datasets/airliners/private_test
+    lmdb_dir: /data/ssd/run/airliners/lmdb/private_test
+    dataframe: /data/ssd/datasets/airliners/private_test.csv
 
 
 logging:
@@ -38,14 +41,14 @@ logging:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/root.out
+      filename: /data/ssd/run/airliners/logs/root.out
       mode: w
 
     root_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/root.log
+      filename: /data/ssd/run/airliners/logs/root.log
       maxBytes: 134217728
       backupCount: 8
 
@@ -53,14 +56,14 @@ logging:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/pipeline.out
+      filename: /data/ssd/run/airliners/logs/pipeline.out
       mode: w
 
     pipeline_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/pipeline.log
+      filename: /data/ssd/run/airliners/logs/pipeline.log
       maxBytes: 134217728
       backupCount: 8
 
@@ -68,14 +71,14 @@ logging:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: DEBUG
-      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/wheel5.out
+      filename: /data/ssd/run/airliners/logs/wheel5.out
       mode: w
 
     wheel5_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: DEBUG
-      filename: /home/apollo/package/data/ssd/run/airlinersnet/logs/wheel5.log
+      filename: /data/ssd/run/airliners/logs/wheel5.log
       maxBytes: 134217728
       backupCount: 8
 
