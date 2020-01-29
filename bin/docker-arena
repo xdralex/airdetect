@@ -20,6 +20,6 @@ pushd "$DIR" > /dev/null || exit
 
 docker run --gpus all --shm-size=8192m -i -t --rm -u apollo -w $WORK $PORT_BINDING \
        -v "$PWD:$WORK" -v "/data/ssd:/data/ssd" -v "/data/nvme:/data/nvme" "$IMAGE" \
-	     python3.7 pipeline/pipeline.py "${@:1}"
+	     python3.7 arena/cli.py "${@:1}"
 
 popd > /dev/null || exit

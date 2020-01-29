@@ -1,8 +1,8 @@
-import click
 import logging
 import math
 from typing import Dict, NamedTuple, List, Union, Optional
 
+import click
 import hyperopt
 import numpy as np
 import pandas as pd
@@ -17,9 +17,9 @@ from torch.utils.data import Dataset
 from torch.utils.data import SubsetRandomSampler, DataLoader
 from torchvision import transforms
 from wheel5 import logutils
-from wheel5.dataset import LMDBImageDataset, WrappingTransformDataset, split_indices
-from wheel5.nn import AverageModel
+from wheel5.dataset import LMDBImageDataset, split_indices, TransformDataset
 from wheel5.model import fit, score
+from wheel5.nn import AverageModel
 from wheel5.tracking import Tracker, Snapshotter, CheckpointSnapshotter, BestCVSnapshotter, SnapshotConfig, TensorboardConfig
 from wheel5.transforms import SquarePaddedResize
 
@@ -46,43 +46,33 @@ def launch_tensorboard(tensorboard_root: str, port: int = 6006):
     logger.info(f'Launched TensorBoard at {url}')
 
 
-def load_image_dataset(config: Dict[str, str], augment: bool = False) -> LMDBImageDataset:
+def load_image_dataset(config: Dict[str, str], augment: bool = False) -> Dataset:
     df_images = pd.read_csv(filepath_or_buffer=config['dataframe'], sep=',', header=0)
 
+    lmdb_dataset = LMDBImageDataset.cached(df_images,
+                                           image_dir=config['image_dir'],
+                                           lmdb_path=config['lmdb_dir'],
+                                           transform=SquarePaddedResize(size=224))
+
     if augment:
-        getitem_transform = transforms.Compose([
-            transforms.RandomHorizontalFlip()
-        ])
+        aug_dataset = TransformDataset(lmdb_dataset,
+                                       transform=transforms.Compose([
+                                           transforms.RandomHorizontalFlip()
+                                       ]))
     else:
-        getitem_transform = None
+        aug_dataset = lmdb_dataset
 
-    return LMDBImageDataset.cached(df_images,
-                                   image_dir=config['image_dir'],
-                                   lmdb_path=config['lmdb_dir'],
-                                   prepare_transform=SquarePaddedResize(size=224),
-                                   getitem_transform=getitem_transform)
-
-
-def wrap_model_dataset(dataset: Dataset) -> WrappingTransformDataset:
-    transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-    ])
-
-    def transform_fn(arg):
-        image, cls, name, index = arg
-        return transform(image), cls, name, index
-
-    return WrappingTransformDataset(
-        wrapped=dataset,
-        transform_fn=transform_fn
-    )
+    return TransformDataset(aug_dataset,
+                            transform=transforms.Compose([
+                                transforms.ToTensor(),
+                                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                            ]))
 
 
 def load_data(datasets_config: Dict, grad_batch: int = 64, nograd_batch: int = 256) -> PipelineData:
-    train_dataset = wrap_model_dataset(load_image_dataset(datasets_config['train'], augment=True))
-    public_test_dataset = wrap_model_dataset(load_image_dataset(datasets_config['public_test']))
-    private_test_dataset = wrap_model_dataset(load_image_dataset(datasets_config['private_test']))
+    train_dataset = load_image_dataset(datasets_config['train'], augment=True)
+    public_test_dataset = load_image_dataset(datasets_config['public_test'])
+    private_test_dataset = load_image_dataset(datasets_config['private_test'])
 
     train_indices = list(range(len(train_dataset)))
     public_test_indices = list(range(len(public_test_dataset)))
@@ -237,14 +227,15 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
     input("\nPipeline completed, press Enter to exit (this will terminate TensorBoard)\n")
 
 
-@click.command(name='evaluate-top')
+@click.command(name='eval-top')
 @click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
 @click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
 @click.option('--kind', 'kind', required=True, type=click.Choice(['final', 'best']), help='use final/best models')
 @click.option('--top', 'top', default=1, help='number of best models to use', type=int)
 @click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
 @click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
-def cli_evaluate_top(experiment: str, device_name: str, kind: str, top: int, metric_name: str, order: str):
+@click.option('--test', 'test', default='public', type=click.Choice(['public', 'private']), help='public/private test dataset')
+def cli_eval_top(experiment: str, device_name: str, kind: str, top: int, metric_name: str, order: str, test: str):
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
         return df.sort_values(by=metric_name, ascending=(order == 'asc'))
 
@@ -263,6 +254,14 @@ def cli_evaluate_top(experiment: str, device_name: str, kind: str, top: int, met
     else:
         raise click.BadOptionUsage('kind', f'Unsupported kind option: "{kind}"')
 
+    pipeline_data = load_data(config['datasets'])
+    if test == 'public':
+        test_bundle = pipeline_data.public_test
+    elif test == 'private':
+        test_bundle = pipeline_data.private_test
+    else:
+        raise click.BadOptionUsage('test', f'Unsupported test option: "{test}"')
+
     df_top_models = df_model.head(top)
     print(f'Averaging top models: \n\n{dump(df_top_models)}\n\n\n')
 
@@ -274,10 +273,10 @@ def cli_evaluate_top(experiment: str, device_name: str, kind: str, top: int, met
         loss = snapshot.loss
 
     final_model = AverageModel(models)
-
-    pipeline_data = load_data(config['datasets'])
     final_model.to(device)
-    print(score(device, final_model, pipeline_data.public_test.loader, loss))
+
+    print(f'Evaluating model performance on the >>{test}<< test dataset')
+    print(score(device, final_model, test_bundle.loader, loss))
 
 
 @click.command(name='list-top')
@@ -305,10 +304,10 @@ def cli_list_top(experiment: str, top: int, metric_name: str, order: str):
         print(f'Best results by trial: \n\n{dump(df_best, top=top)}\n\n\n')
 
 
-@click.command(name='list-entries')
+@click.command(name='list-all')
 @click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
 @click.option('--all/--snap', 'list_all', default=True, help='list all entries (default) / only entries with snapshots')
-def cli_list_entries(experiment: str, list_all: bool):
+def cli_list_all(experiment: str, list_all: bool):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
 
@@ -334,7 +333,7 @@ if __name__ == "__main__":
     PIPELINE_LOGGER = 'pipeline.airliners'
 
     cli.add_command(cli_search)
-    cli.add_command(cli_evaluate_top)
+    cli.add_command(cli_eval_top)
     cli.add_command(cli_list_top)
-    cli.add_command(cli_list_entries)
+    cli.add_command(cli_list_all)
     cli()
