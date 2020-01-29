@@ -84,7 +84,7 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
                                tracker=tracker,
                                train_loader=train_bundle.loader,
                                val_loader=val_bundle.loader,
-                               classes=train_bundle.dataset.wrapped.classes(),
+                               classes=train_bundle.dataset.wrapped.wrapped.classes(),
                                max_epochs=max_epochs,
                                display_progress=False)
 
