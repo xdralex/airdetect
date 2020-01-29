@@ -52,18 +52,18 @@ logging:
       maxBytes: 134217728
       backupCount: 8
 
-    pipeline_out_handler:
+    arena_out_handler:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/ssd/run/airliners/logs/pipeline.out
+      filename: /data/ssd/run/airliners/logs/arena.out
       mode: w
 
-    pipeline_log_handler:
+    arena_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/ssd/run/airliners/logs/pipeline.log
+      filename: /data/ssd/run/airliners/logs/arena.log
       maxBytes: 134217728
       backupCount: 8
 
@@ -87,13 +87,13 @@ logging:
     handlers: [root_out_handler, root_log_handler, console_handler]
 
   loggers:
-    pipeline.airliners:
+    arena:
       level: INFO
-      handlers: [pipeline_out_handler, pipeline_log_handler, console_handler]
+      handlers: [arena_out_handler, arena_log_handler, console_handler]
 
     wheel5:
       level: INFO
-      handlers: [wheel5_out_handler, wheel5_log_handler, pipeline_out_handler, pipeline_log_handler, console_handler]
+      handlers: [wheel5_out_handler, wheel5_log_handler, arena_out_handler, arena_log_handler, console_handler]
 
     wheel5.tracking:
       level: DEBUG

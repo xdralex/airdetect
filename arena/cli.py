@@ -1,182 +1,59 @@
-import logging
 import math
-from typing import Dict, NamedTuple, List, Union, Optional
+from typing import Dict
 
 import click
 import hyperopt
-import numpy as np
 import pandas as pd
 import torch
 import yaml
 from hyperopt import hp, fmin
-from tabulate import tabulate
-from tensorboard import program
-from torch import nn
-from torch import optim
-from torch.utils.data import Dataset
-from torch.utils.data import SubsetRandomSampler, DataLoader
-from torchvision import transforms
 from wheel5 import logutils
-from wheel5.dataset import LMDBImageDataset, split_indices, TransformDataset
-from wheel5.model import fit, score
+from wheel5.dataset import split_eval_main_data
+from wheel5.model import score
 from wheel5.nn import AverageModel
-from wheel5.tracking import Tracker, Snapshotter, CheckpointSnapshotter, BestCVSnapshotter, SnapshotConfig, TensorboardConfig
-from wheel5.transforms import SquarePaddedResize
+from wheel5.tracking import Tracker, Snapshotter
+
+from experiments import prepare_data, fit_resnet18
+from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
 
 
-class DataBundle(NamedTuple):
-    loader: DataLoader
-    dataset: Dataset
-    indices: List[int]
+@click.command(name='trial')
+@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
+@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
+@click.option('-m', '--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
+def cli_trial(experiment: str, device_name: str, max_epochs: int):
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
 
+    device = torch.device(device_name)
 
-class PipelineData(NamedTuple):
-    train: DataBundle
-    public_test: DataBundle
-    private_test: DataBundle
+    snapshot_cfg = snapshot_config(config)
+    tensorboard_cfg = tensorboard_config(config)
 
+    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment)
 
-def launch_tensorboard(tensorboard_root: str, port: int = 6006):
-    logger = logging.getLogger(PIPELINE_LOGGER)
+    pipeline_data = prepare_data(config['datasets'])
 
-    tb = program.TensorBoard()
-    tb.configure(argv=[None, '--bind_all', '--port', f'{port}', '--logdir', tensorboard_root])
-    url = tb.launch()
+    val_bundle, train_bundle = split_eval_main_data(pipeline_data.train, 0.2)
 
-    logger.info(f'Launched TensorBoard at {url}')
-
-
-def load_image_dataset(config: Dict[str, str], augment: bool = False) -> Dataset:
-    df_images = pd.read_csv(filepath_or_buffer=config['dataframe'], sep=',', header=0)
-
-    lmdb_dataset = LMDBImageDataset.cached(df_images,
-                                           image_dir=config['image_dir'],
-                                           lmdb_path=config['lmdb_dir'],
-                                           transform=SquarePaddedResize(size=224))
-
-    if augment:
-        aug_dataset = TransformDataset(lmdb_dataset,
-                                       transform=transforms.Compose([
-                                           transforms.RandomHorizontalFlip()
-                                       ]))
-    else:
-        aug_dataset = lmdb_dataset
-
-    return TransformDataset(aug_dataset,
-                            transform=transforms.Compose([
-                                transforms.ToTensor(),
-                                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-                            ]))
-
-
-def load_data(datasets_config: Dict, grad_batch: int = 64, nograd_batch: int = 256) -> PipelineData:
-    train_dataset = load_image_dataset(datasets_config['train'], augment=True)
-    public_test_dataset = load_image_dataset(datasets_config['public_test'])
-    private_test_dataset = load_image_dataset(datasets_config['private_test'])
-
-    train_indices = list(range(len(train_dataset)))
-    public_test_indices = list(range(len(public_test_dataset)))
-    private_test_indices = list(range(len(private_test_dataset)))
-
-    train_sampler = SubsetRandomSampler(train_indices)
-    public_test_sampler = SubsetRandomSampler(public_test_indices)
-    private_test_sampler = SubsetRandomSampler(private_test_indices)
-
-    train_loader = DataLoader(train_dataset, batch_size=grad_batch, sampler=train_sampler, num_workers=4, pin_memory=True)
-    public_test_loader = DataLoader(public_test_dataset, batch_size=nograd_batch, sampler=public_test_sampler, num_workers=4, pin_memory=True)
-    private_test_loader = DataLoader(private_test_dataset, batch_size=nograd_batch, sampler=private_test_sampler, num_workers=4, pin_memory=True)
-
-    return PipelineData(train=DataBundle(loader=train_loader, dataset=train_dataset, indices=train_indices),
-                        public_test=DataBundle(loader=public_test_loader, dataset=public_test_dataset, indices=public_test_indices),
-                        private_test=DataBundle(loader=private_test_loader, dataset=private_test_dataset, indices=private_test_indices))
-
-
-def split_eval_main_data(bundle: DataBundle, split: float, grad_batch: int = 64, nograd_batch: int = 256) -> (DataBundle, DataBundle):
-    random_state = np.random.RandomState(42)
-
-    eval_indices, main_indices = split_indices(bundle.indices, split=split, random_state=random_state)
-
-    eval_sampler = SubsetRandomSampler(eval_indices)
-    main_sampler = SubsetRandomSampler(main_indices)
-
-    eval_loader = DataLoader(bundle.dataset, batch_size=nograd_batch, sampler=eval_sampler, num_workers=4, pin_memory=True)
-    main_loader = DataLoader(bundle.dataset, batch_size=grad_batch, sampler=main_sampler, num_workers=4, pin_memory=True)
-
-    eval_bundle = DataBundle(loader=eval_loader, dataset=bundle.dataset, indices=eval_indices)
-    main_bundle = DataBundle(loader=main_loader, dataset=bundle.dataset, indices=main_indices)
-
-    return eval_bundle, main_bundle
-
-
-def fit_resnet18(hparams: Dict[str, float],
-                 device: Union[torch.device, int],
-                 tracker: Tracker,
-                 train_loader: DataLoader,
-                 val_loader: DataLoader,
-                 classes: int,
-                 max_epochs: int) -> Dict[str, float]:
-    # Model preparation
-    model = torch.hub.load('pytorch/vision:v0.4.2', 'resnet18', pretrained=True, verbose=False)
-
-    old_fc = model.fc
-    model.fc = nn.Linear(in_features=old_fc.in_features, out_features=classes)
-
-    model.type(torch.cuda.FloatTensor)
-    model.to(device)
-
-    loss = nn.CrossEntropyLoss()
-
-    params_old = list([param for name, param in model.named_parameters() if not name.startswith('fc.')])
-    params_new = list([param for name, param in model.named_parameters() if name.startswith('fc.')])
-    optimizer_params = [
-        {'params': params_old, 'lr': hparams['lrA'], 'weight_decay': hparams['wdA']},
-        {'params': params_new, 'lr': hparams['lrB'], 'weight_decay': hparams['wdB']}
-    ]
-    optimizer = optim.AdamW(optimizer_params)
-
-    # Training setup
-    trial_tracker = tracker.new_trial(hparams)
-    fit(device, model, train_loader, val_loader, loss, optimizer, num_epochs=max_epochs, tracker=trial_tracker, display_progress=False)
-
-    # Reporting
-    metrics_df = trial_tracker.metrics_df
-    results = {
-        'hp/best_val_acc': metrics_df['val_acc'].max(),
-        'hp/best_val_loss': metrics_df['val_loss'].min(),
-        'hp/final_val_acc': metrics_df['val_acc'].iloc[-1],
-        'hp/final_val_loss': metrics_df['val_loss'].iloc[-1],
-
-        'hp/best_train_acc': metrics_df['train_acc'].max(),
-        'hp/best_train_loss': metrics_df['train_loss'].min(),
-        'hp/final_train_acc': metrics_df['train_acc'].iloc[-1],
-        'hp/final_train_loss': metrics_df['train_loss'].iloc[-1],
+    hparams = {
+        'lrA': 0.00029833,
+        'lrB': 0.00113499,
+        'wdA': 0.00265031,
+        'wdB': 0.00040662
     }
-    trial_tracker.trial_completed(results)
 
-    return results
+    results = fit_resnet18(hparams,
+                           device=device,
+                           tracker=tracker,
+                           train_loader=train_bundle.loader,
+                           val_loader=val_bundle.loader,
+                           classes=train_bundle.dataset.wrapped.wrapped.classes(),  # TODO
+                           max_epochs=max_epochs,
+                           display_progress=True)
 
-
-def snapshot_config(config: Dict) -> SnapshotConfig:
-    return SnapshotConfig(root_dir=config['tracker']['snapshot_root'],
-                          snapshotters=[
-                              CheckpointSnapshotter(frequency=20),
-                              BestCVSnapshotter(metric_name='acc', asc=False, top=5),
-                              BestCVSnapshotter(metric_name='loss', asc=True, top=5)])
-
-
-def tensorboard_config(config: Dict) -> TensorboardConfig:
-    return TensorboardConfig(root_dir=config['tracker']['tensorboard_root'])
-
-
-def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[str]] = None) -> str:
-    if drop_cols is None:
-        drop_cols = ['experiment', 'trial', 'time', 'directory']
-
-    df = df.drop(columns=drop_cols)
-    if top:
-        df = df.head(top)
-
-    return tabulate(df, headers="keys", showindex=False, tablefmt='github')
+    print(results)
 
 
 @click.command(name='search')
@@ -197,10 +74,9 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
     tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment)
     launch_tensorboard(tracker.tensorboard_dir)
 
-    pipeline_data = load_data(config['datasets'])
+    pipeline_data = prepare_data(config['datasets'])
 
-    stack_bundle, model_bundle = split_eval_main_data(pipeline_data.train, 0.1)
-    val_bundle, train_bundle = split_eval_main_data(model_bundle, 0.2)
+    val_bundle, train_bundle = split_eval_main_data(pipeline_data.train, 0.2)
 
     def fit_trial_resnet18(hparams: Dict[str, float]):
         results = fit_resnet18(hparams,
@@ -209,7 +85,8 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
                                train_loader=train_bundle.loader,
                                val_loader=val_bundle.loader,
                                classes=train_bundle.dataset.wrapped.classes(),
-                               max_epochs=max_epochs)
+                               max_epochs=max_epochs,
+                               display_progress=False)
 
         return results['hp/best_val_loss']
 
@@ -254,7 +131,7 @@ def cli_eval_top(experiment: str, device_name: str, kind: str, top: int, metric_
     else:
         raise click.BadOptionUsage('kind', f'Unsupported kind option: "{kind}"')
 
-    pipeline_data = load_data(config['datasets'])
+    pipeline_data = prepare_data(config['datasets'])
     if test == 'public':
         test_bundle = pipeline_data.public_test
     elif test == 'private':
@@ -330,8 +207,7 @@ def cli():
 
 
 if __name__ == "__main__":
-    PIPELINE_LOGGER = 'pipeline.airliners'
-
+    cli.add_command(cli_trial)
     cli.add_command(cli_search)
     cli.add_command(cli_eval_top)
     cli.add_command(cli_list_top)
