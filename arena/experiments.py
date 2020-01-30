@@ -3,27 +3,38 @@ from typing import Dict, Union
 import albumentations as albu
 import cv2
 import torch
+import wheel5.transforms as wheeltr
+from PIL import Image
 from torch import nn
 from torch import optim
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from wheel5.model import fit
 from wheel5.tracking import Tracker
-from wheel5.transforms import SquarePaddedResize
 
 from data import load_data
 
 
 def prepare_data(datasets_config: Dict):
-    lmdb_transform = SquarePaddedResize(size=224)
+    lmdb_transform = transforms.Compose([
+        wheeltr.Rescale(scale=0.5, interpolation=Image.LANCZOS),
+        wheeltr.PadToSquare()
+    ])
 
     aug_transform = albu.Compose([
         albu.HorizontalFlip(p=0.5),
         albu.ToGray(p=0.1),
-        albu.Rotate(limit=15, p=0.5, border_mode=cv2.BORDER_CONSTANT, value=0)
+        albu.ShiftScaleRotate(shift_limit=0.1,
+                              scale_limit=(-0.2, 0.1),
+                              rotate_limit=15,
+                              border_mode=cv2.BORDER_CONSTANT,
+                              value=0,
+                              interpolation=cv2.INTER_LANCZOS4,
+                              p=1.0)
     ])
 
     model_transform = transforms.Compose([
+        wheeltr.SquarePaddedResize(size=224, interpolation=Image.LANCZOS),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
