@@ -1,9 +1,8 @@
 from typing import Dict, Union
 
+import albumentations as albu
 import cv2
 import torch
-from albumentations import Compose, HorizontalFlip, ToGray
-from albumentations import Rotate
 from torch import nn
 from torch import optim
 from torch.utils.data import DataLoader
@@ -18,10 +17,10 @@ from data import load_data
 def prepare_data(datasets_config: Dict):
     lmdb_transform = SquarePaddedResize(size=224)
 
-    aug_transform = Compose([
-        HorizontalFlip(p=0.5),
-        ToGray(p=0.1),
-        Rotate(limit=15, p=0.5, border_mode=cv2.BORDER_CONSTANT, value=0)
+    aug_transform = albu.Compose([
+        albu.HorizontalFlip(p=0.5),
+        albu.ToGray(p=0.1),
+        albu.Rotate(limit=15, p=0.5, border_mode=cv2.BORDER_CONSTANT, value=0)
     ])
 
     model_transform = transforms.Compose([
@@ -35,16 +34,16 @@ def prepare_data(datasets_config: Dict):
                      model_transform=model_transform)
 
 
-def fit_resnet18(hparams: Dict[str, float],
-                 device: Union[torch.device, int],
-                 tracker: Tracker,
-                 train_loader: DataLoader,
-                 val_loader: DataLoader,
-                 classes: int,
-                 max_epochs: int,
-                 display_progress: bool) -> Dict[str, float]:
+def fit_resnet(hparams: Dict[str, float],
+               device: Union[torch.device, int],
+               tracker: Tracker,
+               train_loader: DataLoader,
+               val_loader: DataLoader,
+               classes: int,
+               max_epochs: int,
+               display_progress: bool) -> Dict[str, float]:
     # Model preparation
-    model = torch.hub.load('pytorch/vision:v0.4.2', 'resnet18', pretrained=True, verbose=False)
+    model = torch.hub.load('pytorch/vision:v0.4.2', 'resnet50', pretrained=True, verbose=False)
 
     old_fc = model.fc
     model.fc = nn.Linear(in_features=old_fc.in_features, out_features=classes)

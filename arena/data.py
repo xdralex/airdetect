@@ -1,8 +1,8 @@
 from typing import Dict, NamedTuple, Optional, Callable
 
+import albumentations as albu
 import pandas as pd
 from PIL.Image import Image as Img
-from albumentations import BasicTransform
 from torch.utils.data import Dataset
 from torch.utils.data import SubsetRandomSampler, DataLoader
 from wheel5.dataset import LMDBImageDataset, TransformDataset, AlbumentationsDataset, DataBundle
@@ -16,7 +16,7 @@ class PipelineData(NamedTuple):
 
 def load_image_dataset(config: Dict[str, str],
                        lmdb_transform: Optional[Callable[[Img], Img]] = None,
-                       aug_transform: Optional[BasicTransform] = None,
+                       aug_transform: Optional[albu.BasicTransform] = None,
                        model_transform: Optional[Callable[[Img], Img]] = None) -> Dataset:
     df_images = pd.read_csv(filepath_or_buffer=config['dataframe'], sep=',', header=0)
 
@@ -38,9 +38,8 @@ def load_data(datasets_config: Dict,
               grad_batch: int = 64,
               nograd_batch: int = 256,
               lmdb_transform: Optional[Callable[[Img], Img]] = None,
-              aug_transform: Optional[BasicTransform] = None,
+              aug_transform: Optional[albu.BasicTransform] = None,
               model_transform: Optional[Callable[[Img], Img]] = None) -> PipelineData:
-
     train_dataset = load_image_dataset(datasets_config['train'], lmdb_transform=lmdb_transform, aug_transform=aug_transform, model_transform=model_transform)
     public_test_dataset = load_image_dataset(datasets_config['public_test'], lmdb_transform=lmdb_transform, model_transform=model_transform)
     private_test_dataset = load_image_dataset(datasets_config['private_test'], lmdb_transform=lmdb_transform, model_transform=model_transform)

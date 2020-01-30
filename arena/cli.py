@@ -13,7 +13,7 @@ from wheel5.model import score
 from wheel5.nn import AverageModel
 from wheel5.tracking import Tracker, Snapshotter
 
-from experiments import prepare_data, fit_resnet18
+from experiments import prepare_data, fit_resnet
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
 
 
@@ -32,6 +32,7 @@ def cli_trial(experiment: str, device_name: str, max_epochs: int):
     tensorboard_cfg = tensorboard_config(config)
 
     tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment)
+    launch_tensorboard(tracker.tensorboard_dir)
 
     pipeline_data = prepare_data(config['datasets'])
 
@@ -44,14 +45,14 @@ def cli_trial(experiment: str, device_name: str, max_epochs: int):
         'wdB': 0.00040662
     }
 
-    results = fit_resnet18(hparams,
-                           device=device,
-                           tracker=tracker,
-                           train_loader=train_bundle.loader,
-                           val_loader=val_bundle.loader,
-                           classes=train_bundle.dataset.wrapped.wrapped.classes(),  # TODO
-                           max_epochs=max_epochs,
-                           display_progress=True)
+    results = fit_resnet(hparams,
+                         device=device,
+                         tracker=tracker,
+                         train_loader=train_bundle.loader,
+                         val_loader=val_bundle.loader,
+                         classes=train_bundle.dataset.wrapped.wrapped.classes(),  # TODO
+                         max_epochs=max_epochs,
+                         display_progress=True)
 
     print(results)
 
@@ -78,20 +79,20 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
 
     val_bundle, train_bundle = split_eval_main_data(pipeline_data.train, 0.2)
 
-    def fit_trial_resnet18(hparams: Dict[str, float]):
-        results = fit_resnet18(hparams,
-                               device=device,
-                               tracker=tracker,
-                               train_loader=train_bundle.loader,
-                               val_loader=val_bundle.loader,
-                               classes=train_bundle.dataset.wrapped.wrapped.classes(),
-                               max_epochs=max_epochs,
-                               display_progress=False)
+    def fit_trial_resnet(hparams: Dict[str, float]):
+        results = fit_resnet(hparams,
+                             device=device,
+                             tracker=tracker,
+                             train_loader=train_bundle.loader,
+                             val_loader=val_bundle.loader,
+                             classes=train_bundle.dataset.wrapped.wrapped.classes(),
+                             max_epochs=max_epochs,
+                             display_progress=False)
 
         return results['hp/best_val_loss']
 
     space = {
-        'resnet18': {
+        'resnet': {
             'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1)),
             'wdA': hp.loguniform('wdA', math.log(1e-4), math.log(1)),
             'lrB': hp.loguniform('lrB', math.log(1e-5), math.log(1)),
@@ -99,9 +100,9 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
         }
     }
 
-    fmin(fit_trial_resnet18, space=space['resnet18'], algo=hyperopt.rand.suggest, max_evals=trials)
+    fmin(fit_trial_resnet, space=space['resnet'], algo=hyperopt.rand.suggest, max_evals=trials)
 
-    input("\nPipeline completed, press Enter to exit (this will terminate TensorBoard)\n")
+    input("\nSearch completed, press Enter to exit (this will terminate TensorBoard)\n")
 
 
 @click.command(name='eval-top')
@@ -152,7 +153,7 @@ def cli_eval_top(experiment: str, device_name: str, kind: str, top: int, metric_
     final_model = AverageModel(models)
     final_model.to(device)
 
-    print(f'Evaluating model performance on the >>{test}<< test dataset')
+    print(f'Evaluating model performance on the >>{test}<< test dataset:\n')
     print(score(device, final_model, test_bundle.loader, loss))
 
 
