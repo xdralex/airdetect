@@ -45,7 +45,8 @@ def prepare_data(datasets_config: Dict):
                      model_transform=model_transform)
 
 
-def fit_resnet(hparams: Dict[str, float],
+def fit_resnet(nn_name: str,
+               hparams: Dict[str, float],
                device: Union[torch.device, int],
                tracker: Tracker,
                train_loader: DataLoader,
@@ -54,7 +55,7 @@ def fit_resnet(hparams: Dict[str, float],
                max_epochs: int,
                display_progress: bool) -> Dict[str, float]:
     # Model preparation
-    model = torch.hub.load('pytorch/vision:v0.4.2', 'resnet50', pretrained=True, verbose=False)
+    model = torch.hub.load('pytorch/vision:v0.4.2', nn_name, pretrained=True, verbose=False)
 
     old_fc = model.fc
     model.fc = nn.Linear(in_features=old_fc.in_features, out_features=classes)

@@ -1,3 +1,4 @@
+import json
 import math
 from typing import Dict
 
@@ -9,8 +10,7 @@ import yaml
 from hyperopt import hp, fmin
 from wheel5 import logutils
 from wheel5.dataset import split_eval_main_data
-from wheel5.model import score
-from wheel5.nn import AverageModel
+from wheel5.model import score_blend
 from wheel5.tracking import Tracker, Snapshotter
 
 from experiments import prepare_data, fit_resnet
@@ -45,7 +45,8 @@ def cli_trial(experiment: str, device_name: str, max_epochs: int):
         'wdB': 0.00040662
     }
 
-    results = fit_resnet(hparams,
+    results = fit_resnet('resnet50',
+                         hparams,
                          device=device,
                          tracker=tracker,
                          train_loader=train_bundle.loader,
@@ -54,7 +55,9 @@ def cli_trial(experiment: str, device_name: str, max_epochs: int):
                          max_epochs=max_epochs,
                          display_progress=True)
 
-    print(results)
+    print(json.dumps(results, indent=4))
+
+    input("\nTrial completed, press Enter to exit (this will terminate TensorBoard)\n")
 
 
 @click.command(name='search')
@@ -80,7 +83,8 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
     val_bundle, train_bundle = split_eval_main_data(pipeline_data.train, 0.2)
 
     def fit_trial_resnet(hparams: Dict[str, float]):
-        results = fit_resnet(hparams,
+        results = fit_resnet('resnet50',
+                             hparams,
                              device=device,
                              tracker=tracker,
                              train_loader=train_bundle.loader,
@@ -92,20 +96,27 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
         return results['hp/best_val_loss']
 
     space = {
-        'resnet': {
+        'resnet18_broad': {
             'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1)),
             'wdA': hp.loguniform('wdA', math.log(1e-4), math.log(1)),
             'lrB': hp.loguniform('lrB', math.log(1e-5), math.log(1)),
             'wdB': hp.loguniform('wdB', math.log(1e-4), math.log(1))
+        },
+
+        'resnet50_narrow': {
+            'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1e-3)),
+            'wdA': hp.loguniform('wdA', math.log(1e-4), math.log(1)),
+            'lrB': hp.loguniform('lrB', math.log(1e-5), math.log(1e-2)),
+            'wdB': hp.loguniform('wdB', math.log(1e-4), math.log(1))
         }
     }
 
-    fmin(fit_trial_resnet, space=space['resnet'], algo=hyperopt.rand.suggest, max_evals=trials)
+    fmin(fit_trial_resnet, space=space['resnet50_narrow'], algo=hyperopt.rand.suggest, max_evals=trials)
 
     input("\nSearch completed, press Enter to exit (this will terminate TensorBoard)\n")
 
 
-@click.command(name='eval-top')
+@click.command(name='eval-top-blend')
 @click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
 @click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
 @click.option('--kind', 'kind', required=True, type=click.Choice(['final', 'best']), help='use final/best models')
@@ -113,7 +124,7 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
 @click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
 @click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
 @click.option('--test', 'test', default='public', type=click.Choice(['public', 'private']), help='public/private test dataset')
-def cli_eval_top(experiment: str, device_name: str, kind: str, top: int, metric_name: str, order: str, test: str):
+def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, metric_name: str, order: str, test: str):
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
         return df.sort_values(by=metric_name, ascending=(order == 'asc'))
 
@@ -147,14 +158,15 @@ def cli_eval_top(experiment: str, device_name: str, kind: str, top: int, metric_
     loss = None
     for row in df_top_models.head(top).itertuples():
         snapshot = Snapshotter.load_snapshot(row.directory, row.snapshot)
-        models.append(snapshot.model)
+        model = snapshot.model.cpu()
+
+        models.append(model)
         loss = snapshot.loss
 
-    final_model = AverageModel(models)
-    final_model.to(device)
+        del snapshot
 
     print(f'Evaluating model performance on the >>{test}<< test dataset:\n')
-    print(score(device, final_model, test_bundle.loader, loss))
+    print(score_blend(device, models, test_bundle.loader, loss))
 
 
 @click.command(name='list-top')
@@ -210,7 +222,7 @@ def cli():
 if __name__ == "__main__":
     cli.add_command(cli_trial)
     cli.add_command(cli_search)
-    cli.add_command(cli_eval_top)
+    cli.add_command(cli_eval_top_blend)
     cli.add_command(cli_list_top)
     cli.add_command(cli_list_all)
     cli()
