@@ -12,9 +12,34 @@ from wheel5 import logutils
 from wheel5.dataset import split_eval_main_data
 from wheel5.model import score_blend
 from wheel5.tracking import Tracker, Snapshotter
+from torchviz import make_dot, make_dot_from_trace
 
 from experiments import prepare_data, fit_resnet
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
+
+
+@click.command(name='introspect-nn')
+@click.option('-r', '--repo', 'repo', default='pytorch/vision', help='repository (e.g. pytorch/vision)', type=str)
+@click.option('-t', '--tag', 'tag', default='v0.4.2', help='tag (e.g. v0.4.2)', type=str)
+@click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
+@click.option('-s', '--shape', 'shape', required=True, help='input shape (e.g. 224x224x3)', type=str)
+def cli_introspect_nn(repo: str, tag: str, network: str, shape: str):
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+        viz_nn_dir = config['viz']['nn_dir']
+
+    dims = []
+    for dim_str in shape.split('x'):
+        try:
+            dims.append(int(dim_str))
+        except ValueError:
+            raise click.BadOptionUsage('shape', f'Invalid shape format: "{shape}" - dimension "{dim_str}"')
+
+    model = torch.hub.load(f'{repo}:{tag}', network, pretrained=True, verbose=False)
+    x = torch.randn(dims)
+
+    dot = make_dot(model(x), params=dict(model.named_parameters()))
+    dot.render(filename=f'{network}', directory=viz_nn_dir, format='dot')
 
 
 @click.command(name='trial')
@@ -220,6 +245,7 @@ def cli():
 
 
 if __name__ == "__main__":
+    cli.add_command(cli_introspect_nn)
     cli.add_command(cli_trial)
     cli.add_command(cli_search)
     cli.add_command(cli_eval_top_blend)

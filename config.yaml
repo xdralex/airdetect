@@ -20,6 +20,10 @@ datasets:
     dataframe: /data/ssd/datasets/airliners/private_test.csv
 
 
+viz:
+  nn_dir: /data/ssd/run/airliners/viz/networks
+
+
 logging:
   version: 1
 
