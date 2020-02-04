@@ -4,6 +4,7 @@ from typing import NamedTuple, List, Dict, Set, Optional, Callable, Tuple, Itera
 from collections import deque
 
 import torch
+from graphviz import Digraph
 from torch import nn
 
 
@@ -227,7 +228,7 @@ class LogRecord(object):
         return f'{self.module_class_name}({params_str}) - {input_str} => {output_str}'
 
 
-def introspect(model: nn.Module, input_size):
+def introspect(model: nn.Module, input_size) -> NetworkGraph:
     anti_gc = set()  # Needed to prevent the variables from being reused by the torch backend
 
     hook_handles = []
@@ -289,7 +290,7 @@ def introspect(model: nn.Module, input_size):
     def run_model():
         dtype = torch.cuda.FloatTensor
         input_size_tuple = [input_size] if not isinstance(input_size, tuple) else input_size
-        x = [torch.rand(2, *in_size).type(dtype) for in_size in input_size_tuple]
+        x = [torch.rand(*in_size).type(dtype) for in_size in input_size_tuple]
 
         model.apply(register_hook)
         y = model(*x)
@@ -354,10 +355,59 @@ def introspect(model: nn.Module, input_size):
 
     run_model()
 
-    print(network_graph)
-    for r in log:
-        print(r)
+    # print(network_graph)
+    # for r in log:
+    #     print(r)
 
     compact_graph()
 
-    print(network_graph)
+    # print(network_graph)
+
+    return network_graph
+
+
+def make_dot(graph: NetworkGraph) -> Digraph:
+
+    def resize_graph(g: Digraph, size_per_element: float = 0.15, min_size: float = 12):
+        num_rows = len(g.body)
+        content_size = num_rows * size_per_element
+        side_size = max(min_size, content_size)
+        size_str = str(side_size) + "," + str(side_size)
+        g.graph_attr.update(size=size_str)
+
+    node_attr = dict(style='filled',
+                     shape='box',
+                     align='left',
+                     fontsize='12',
+                     ranksep='0.1',
+                     height='0.2')
+    dot = Digraph(node_attr=node_attr, graph_attr=dict(size="12,12"))
+
+    for gid, data in graph.nodes.items():
+        if isinstance(data, VarData):
+            text = f'{data.class_name}'
+            color = 'darkseagreen2'
+            if data.comment is not None:
+                text += f'\n{data.comment}'
+                color = 'gray85'
+            if data.variable_size is not None:
+                text += f'\n{size_to_str(data.variable_size)}'
+                color = 'gray85'
+
+            dot.node(str(gid), text, fillcolor=color)
+        elif isinstance(data, ModuleData):
+            text = f'{data.module_class_name}'
+            for _, (name, size) in data.module_params.items():
+                text += f'\n{name} - {size_to_str(size)}'
+
+            dot.node(str(gid), text, fillcolor='lightblue')
+        else:
+            raise AssertionError(f'Unexpected node data type: {type(data)}')
+
+    for gid_out, gid_ins in graph.edges.items():
+        for gid_in in gid_ins:
+            dot.edge(str(gid_in), str(gid_out))
+
+    resize_graph(dot)
+
+    return dot

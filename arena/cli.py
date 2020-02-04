@@ -9,17 +9,14 @@ import torch
 import yaml
 from hyperopt import hp, fmin
 from torch import nn
-from torchsummary import summary
 from wheel5 import logutils
 from wheel5.dataset import split_eval_main_data
 from wheel5.model import score_blend
 from wheel5.tracking import Tracker, Snapshotter
-import hiddenlayer as hl
 
 from experiments import prepare_data, fit_resnet
+from introspection import introspect, make_dot
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
-from introspection import introspect
-
 
 
 class FuckViz(nn.Module):
@@ -80,8 +77,8 @@ def cli_introspect_nn(repo: str, tag: str, network: str, shape: str, device_name
     # custom
     #
 
-    model = FuckViz()
-    # model = torch.hub.load(f'{repo}:{tag}', network, pretrained=True, verbose=False)
+    # model = FuckViz()
+    model = torch.hub.load(f'{repo}:{tag}', network, pretrained=True, verbose=False)
 
 
     # model = nn.Sequential(
@@ -94,7 +91,9 @@ def cli_introspect_nn(repo: str, tag: str, network: str, shape: str, device_name
 
     device = torch.device(device_name)
     model = model.to(device)
-    introspect(model, input_size=dims)
+    graph = introspect(model, input_size=dims)
+    dot = make_dot(graph)
+    dot.render(filename=f'resnet18', directory=viz_nn_dir, format='dot')
 
     # dot = hl.build_graph(model, torch.randn(dims))
     # dot.render(filename=f'check', directory=viz_nn_dir, format='dot')
