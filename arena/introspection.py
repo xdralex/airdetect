@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import NamedTuple, List, Dict, Set, Optional, Callable, Tuple
 from collections import deque
 
@@ -8,6 +9,12 @@ from torch import nn
 #
 # Inspired by torchviz and pytorch-summary
 #
+
+
+class ControlFlow(Enum):
+    CONTINUE = 1
+    STOP = 2
+    BREAK = 3
 
 
 class GradId(NamedTuple):
@@ -88,7 +95,7 @@ class NetworkGraph(object):
     def contains(self, gid: GradId) -> bool:
         return gid in self.nodes
 
-    def beam_search(self, gid: GradId, stop: Callable[[GradId, NodeData], bool]) -> Optional[Beam]:
+    def beam_search(self, gid: GradId, control: Callable[[GradId, NodeData], ControlFlow]) -> Optional[Beam]:
         assert gid in self.nodes
 
         stack = deque([gid])
@@ -107,12 +114,17 @@ class NetworkGraph(object):
             for gid_in in gids_in:
                 beam_edges.append((gid_out, gid_in))
 
-                if stop(gid_in, self.nodes[gid_in]):
+                flow = control(gid_in, self.nodes[gid_in])
+                if flow == ControlFlow.STOP:
                     terminators.add(gid_in)
-                else:
+                elif flow == ControlFlow.CONTINUE:
                     if gid_in not in inners:
                         inners.add(gid_in)
                         stack.append(gid_in)
+                elif flow == ControlFlow.BREAK:
+                    return None
+                else:
+                    raise AssertionError(f'Unexpected control flow: {flow}')
 
         return Beam(gid, inners, terminators, beam_edges)
 
@@ -246,15 +258,15 @@ def introspect(model: nn.Module, input_size):
         for h in hook_handles:
             h.remove()
 
-    def stop_condition(record: LogRecord):
-        def check(gid: GradId, data: NodeData) -> bool:
+    def control_flow(record: LogRecord):
+        def check(gid: GradId, data: NodeData) -> ControlFlow:
             if gid in record.input_gids:
-                return True
+                return ControlFlow.STOP
 
             if data.variable_id is not None:
-                return data.variable_id in record.module_params
+                return ControlFlow.STOP if data.variable_id in record.module_params else ControlFlow.CONTINUE
 
-            return False
+            return ControlFlow.CONTINUE
 
         return check
 
@@ -265,7 +277,7 @@ def introspect(model: nn.Module, input_size):
         print(r)
 
     r = log[0]
-    beam = network_graph.beam_search(list(r.output_gids)[0], stop_condition(r))
+    beam = network_graph.beam_search(list(r.output_gids)[0], control_flow(r))
     network_graph.drop_beam(beam, r.input_gids)
     print('')
     print(beam)
@@ -273,7 +285,7 @@ def introspect(model: nn.Module, input_size):
     print(network_graph)
 
     r = log[1]
-    beam = network_graph.beam_search(list(r.output_gids)[0], stop_condition(r))
+    beam = network_graph.beam_search(list(r.output_gids)[0], control_flow(r))
     network_graph.drop_beam(beam, r.input_gids)
     print('')
     print(beam)
