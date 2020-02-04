@@ -13,9 +13,9 @@ from wheel5 import logutils
 from wheel5.dataset import split_eval_main_data
 from wheel5.model import score_blend
 from wheel5.tracking import Tracker, Snapshotter
+from wheel5.introspection import introspect, make_dot
 
 from experiments import prepare_data, fit_resnet
-from introspection import introspect, make_dot
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
 
 
@@ -59,15 +59,15 @@ def cli_introspect_nn(repo: str, tag: str, network: str, shape: str, device_name
     # model = model.to(device)
     # print(summary(model, input_size=tuple(dims[1:]), batch_size=dims[0]))
 
-    # model = FuckViz()
-    model = torch.hub.load(f'{repo}:{tag}', network, pretrained=True, verbose=False)
+    model = FuckViz()
+    # model = torch.hub.load(f'{repo}:{tag}', network, pretrained=True, verbose=False)
 
     device = torch.device(device_name)
     model = model.to(device)
 
     graph = introspect(model, input_size=dims)
     dot = make_dot(graph)
-    dot.render(filename=f'resnet18', directory=viz_nn_dir, format='dot')
+    dot.render(filename=f'check2', directory=viz_nn_dir, format='dot')
 
 
 @click.command(name='trial')
