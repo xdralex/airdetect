@@ -81,6 +81,7 @@ def cli_introspect_nn(repo: str, tag: str, network: str, shape: str, device_name
     #
 
     model = FuckViz()
+    # model = torch.hub.load(f'{repo}:{tag}', network, pretrained=True, verbose=False)
 
 
     # model = nn.Sequential(

@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import NamedTuple, List, Dict, Set, Optional, Callable, Tuple
+from typing import NamedTuple, List, Dict, Set, Optional, Callable, Tuple, Iterable
 from collections import deque
 
 import torch
@@ -10,6 +10,9 @@ from torch import nn
 #
 # Inspired by torchviz and pytorch-summary
 #
+
+def size_to_str(size: Iterable[int]) -> str:
+    return 'x'.join(['%d' % v for v in size])
 
 
 class ControlFlow(Enum):
@@ -40,17 +43,24 @@ class NodeData(ABC):
 
 
 class ModuleData(NodeData):
-    def __init__(self, class_name: str):
+    def __init__(self, module: nn.Module):
         super(ModuleData, self).__init__()
 
-        self.class_name = class_name
+        self.module = module
+
+        d = dict(module.named_parameters(recurse=False))
+        self.module_params = {tensor_id(v): (k, tuple(v.size())) for k, v in d.items()}
+
+        self.module_class_name = str(self.module.__class__).split(".")[-1].split("'")[0]
 
     def __repr__(self):
-        return f'module.{self.class_name}'
+        params_str = ', '.join([f'{tid}: {name} {size_to_str(size)}' for tid, (name, size) in self.module_params.items()])
+
+        return f'module.{self.module_class_name}({params_str})'
 
 
 class VarData(NodeData):
-    def __init__(self, class_name: str, variable_id: Optional[TensorId], variable_size: Optional[List[int]], comment: Optional[str]=None):
+    def __init__(self, class_name: str, variable_id: Optional[TensorId], variable_size: Optional[List[int]], comment: Optional[str] = None):
         super(VarData, self).__init__()
 
         self.class_name = class_name
@@ -72,7 +82,7 @@ class VarData(NodeData):
             dump += f' - {self.variable_id}'
 
         if self.variable_size is not None:
-            dump += ' (' + ', '.join(['%d' % v for v in self.variable_size]) + ')'
+            dump += f' {size_to_str(self.variable_size)}'
 
         if self.comment is not None:
             dump += f' # {self.comment}'
@@ -202,7 +212,7 @@ class LogRecord(object):
         self.output = output
 
         d = dict(module.named_parameters(recurse=False))
-        self.module_params = {tensor_id(v): k for k, v in d.items()}
+        self.module_params = {tensor_id(v): (k, tuple(v.size())) for k, v in d.items()}
 
         self.input_gids = set([grad_id(t.grad_fn) for t in input])
         self.output_gids = set([grad_id(t.grad_fn) for t in output])
@@ -210,7 +220,7 @@ class LogRecord(object):
         self.module_class_name = str(self.module.__class__).split(".")[-1].split("'")[0]
 
     def __repr__(self):
-        params_str = ', '.join([f'{k}: {v}' for k, v in self.module_params.items()])
+        params_str = ', '.join([f'{tid}: {name} {size_to_str(size)}' for tid, (name, size) in self.module_params.items()])
         input_str = ', '.join([f'{tensor_id(t)} # {grad_id(t.grad_fn)}' for t in self.input])
         output_str = ', '.join([f'{tensor_id(t)} # {grad_id(t.grad_fn)}' for t in self.output])
 
@@ -306,11 +316,13 @@ def introspect(model: nn.Module, input_size):
 
         return check
 
-    def attach_tensor(gid: GradId, tensor: torch.Tensor, class_name: str):
+    def attach_or_update_tensor(gid: GradId, tensor: torch.Tensor, class_name: str, force_class: bool):
         if network_graph.contains(gid):
             data = network_graph.get_node(gid)
             if isinstance(data, VarData):
                 data.update_if_needed(variable_id=tensor_id(tensor), variable_size=list(tensor.size()))
+                if force_class:
+                    data.class_name = class_name
             else:
                 raise AssertionError(f'Unexpected node data type: {type(data)}')
         else:
@@ -330,13 +342,14 @@ def introspect(model: nn.Module, input_size):
                     # Replacing removed nodes with the module data
                     module_id = GradId(id=f'module#{index}')
                     if not network_graph.contains(module_id):
-                        network_graph.add_node(module_id, ModuleData(class_name=record.module_class_name))
+                        network_graph.add_node(module_id, ModuleData(module=record.module))
 
+                    attach_or_update_tensor(gid_out, tensor_out, 'Tensor', force_class=True)
                     network_graph.add_edge(module_id, gid_out)
 
                     for tensor_in in record.input:
                         gid_in = grad_id(tensor_in.grad_fn)
-                        attach_tensor(gid_in, tensor_in, 'Input')
+                        attach_or_update_tensor(gid_in, tensor_in, 'Tensor', force_class=False)
                         network_graph.add_edge(gid_in, module_id)
 
     run_model()
@@ -348,24 +361,3 @@ def introspect(model: nn.Module, input_size):
     compact_graph()
 
     print(network_graph)
-
-    #
-    #
-    # r = log[0]
-    # beam = network_graph.beam_search(list(r.output_gids)[0], control_flow(r))
-    # network_graph.drop_beam(beam, r.input_gids)
-    # attach_module(r, 0)
-    # print('')
-    # print(beam)
-    # print('')
-    # print(network_graph)
-    #
-    # r = log[1]
-    # beam = network_graph.beam_search(list(r.output_gids)[0], control_flow(r))
-    # network_graph.drop_beam(beam, r.input_gids)
-    # attach_module(r, 1)
-    # print('')
-    # print(beam)
-    # print('')
-    # print(network_graph)
-
