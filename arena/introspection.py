@@ -45,10 +45,11 @@ class NodeData(NamedTuple):
         return dump
 
 
-class Wave(NamedTuple):
+class Beam(NamedTuple):
     seed: GradId
     inners: Set[GradId]
     terminators: Set[GradId]
+    edges: List[Tuple[GradId, GradId]]
 
     def __repr__(self):
         dump = ''
@@ -56,6 +57,7 @@ class Wave(NamedTuple):
         dump += f'seed: {self.seed}\n'
         dump += f'inners: {", ".join([str(gid) for gid in self.inners])}\n'
         dump += f'terminators: {", ".join([str(gid) for gid in self.terminators])}\n'
+        dump += f'edges: {", ".join([str(a) + " <- " + str(b) for a, b in self.edges])}\n'
 
         return dump
 
@@ -86,13 +88,14 @@ class NetworkGraph(object):
     def contains(self, gid: GradId) -> bool:
         return gid in self.nodes
 
-    def restricted_wave(self, gid: GradId, stop: Callable[[GradId, NodeData], bool]) -> Optional[Wave]:
+    def beam_search(self, gid: GradId, stop: Callable[[GradId, NodeData], bool]) -> Optional[Beam]:
         assert gid in self.nodes
 
         stack = deque([gid])
 
         inners = set()
         terminators = set()
+        beam_edges = []
 
         while len(stack) > 0:
             gid_out = stack.pop()
@@ -102,6 +105,8 @@ class NetworkGraph(object):
                 return None
 
             for gid_in in gids_in:
+                beam_edges.append((gid_out, gid_in))
+
                 if stop(gid_in, self.nodes[gid_in]):
                     terminators.add(gid_in)
                 else:
@@ -109,7 +114,18 @@ class NetworkGraph(object):
                         inners.add(gid_in)
                         stack.append(gid_in)
 
-        return Wave(gid, inners, terminators)
+        return Beam(gid, inners, terminators, beam_edges)
+
+    def drop_beam(self, beam: Beam, exclude_gids: Set[GradId]):
+        for gid in beam.inners.union(beam.terminators):
+            if gid not in exclude_gids:
+                self.nodes.pop(gid, None)
+
+        for gid_out, gid_in in beam.edges:
+            if gid_out in self.edges:
+                self.edges[gid_out].remove(gid_in)
+                if len(self.edges[gid_out]) == 0:
+                    self.edges.pop(gid_out)
 
     def __repr__(self) -> str:
         dump = ''
@@ -248,10 +264,21 @@ def introspect(model: nn.Module, input_size):
     for r in log:
         print(r)
 
-    print('\n')
+    r = log[0]
+    beam = network_graph.beam_search(list(r.output_gids)[0], stop_condition(r))
+    network_graph.drop_beam(beam, r.input_gids)
+    print('')
+    print(beam)
+    print('')
+    print(network_graph)
 
-    wave = network_graph.restricted_wave(list(log[0].output_gids)[0], stop_condition(log[0]))
-    print(wave)
+    r = log[1]
+    beam = network_graph.beam_search(list(r.output_gids)[0], stop_condition(r))
+    network_graph.drop_beam(beam, r.input_gids)
+    print('')
+    print(beam)
+    print('')
+    print(network_graph)
 
 
 
