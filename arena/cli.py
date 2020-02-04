@@ -8,22 +8,44 @@ import pandas as pd
 import torch
 import yaml
 from hyperopt import hp, fmin
+from torch import nn
+from torchsummary import summary
 from wheel5 import logutils
 from wheel5.dataset import split_eval_main_data
 from wheel5.model import score_blend
 from wheel5.tracking import Tracker, Snapshotter
-from torchviz import make_dot, make_dot_from_trace
+import hiddenlayer as hl
 
 from experiments import prepare_data, fit_resnet
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
+from introspection import introspect
+
+
+
+class FuckViz(nn.Module):
+    def __init__(self):
+        super(FuckViz, self).__init__()
+        # self.l0 = nn.ReLU(inplace=False)
+        self.l1 = nn.Linear(8, 16)
+        self.l2 = nn.Linear(16, 4)
+        # self.l3 = nn.ReLU(inplace=False)
+
+    def forward(self, x):
+        # x = self.l0(x)
+        x = self.l1(x)
+        x = torch.nn.functional.relu(x, inplace=False)
+        x = self.l2(x)
+        # x = self.l3(x)
+        return x
 
 
 @click.command(name='introspect-nn')
 @click.option('-r', '--repo', 'repo', default='pytorch/vision', help='repository (e.g. pytorch/vision)', type=str)
 @click.option('-t', '--tag', 'tag', default='v0.4.2', help='tag (e.g. v0.4.2)', type=str)
 @click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
-@click.option('-s', '--shape', 'shape', required=True, help='input shape (e.g. 224x224x3)', type=str)
-def cli_introspect_nn(repo: str, tag: str, network: str, shape: str):
+@click.option('-s', '--shape', 'shape', required=True, help='input shape (e.g. 3x224x224)', type=str)
+@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
+def cli_introspect_nn(repo: str, tag: str, network: str, shape: str, device_name: str):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         viz_nn_dir = config['viz']['nn_dir']
@@ -31,15 +53,53 @@ def cli_introspect_nn(repo: str, tag: str, network: str, shape: str):
     dims = []
     for dim_str in shape.split('x'):
         try:
-            dims.append(int(dim_str))
+            dims.append(int(dim_str.strip()))
         except ValueError:
-            raise click.BadOptionUsage('shape', f'Invalid shape format: "{shape}" - dimension "{dim_str}"')
+            raise click.BadOptionUsage('shape', f'Invalid input shape: "{shape}" - dimension "{dim_str}"')
 
-    model = torch.hub.load(f'{repo}:{tag}', network, pretrained=True, verbose=False)
-    x = torch.randn(dims)
+    # model = torch.hub.load(f'{repo}:{tag}', network, pretrained=True, verbose=False)
+    # device = torch.device(device_name)
+    # model = model.to(device)
+    # print(summary(model, input_size=tuple(dims[1:]), batch_size=dims[0]))
 
-    dot = make_dot(model(x), params=dict(model.named_parameters()))
-    dot.render(filename=f'{network}', directory=viz_nn_dir, format='dot')
+    # torchviz
+    #
+    # dims = []
+    # for dim_str in shape.split('x'):
+    #     try:
+    #         dims.append(int(dim_str))
+    #     except ValueError:
+    #         raise click.BadOptionUsage('shape', f'Invalid shape format: "{shape}" - dimension "{dim_str}"')
+    #
+    # model = torch.hub.load(f'{repo}:{tag}', network, pretrained=True, verbose=False)
+    # x = torch.randn(dims)
+    #
+    # dot = make_dot(model(x), params=dict(model.named_parameters()))
+    # dot.render(filename=f'{network}', directory=viz_nn_dir, format='dot')
+
+    # custom
+    #
+
+    model = FuckViz()
+
+
+    # model = nn.Sequential(
+    #     nn.ReLU(inplace=False),
+    #     nn.Linear(8, 16),
+    #     nn.ReLU(inplace=False),
+    #     nn.Linear(16, 4),
+    #     nn.ReLU(inplace=False)
+    # )
+
+    device = torch.device(device_name)
+    model = model.to(device)
+    introspect(model, input_size=dims)
+
+    # dot = hl.build_graph(model, torch.randn(dims))
+    # dot.render(filename=f'check', directory=viz_nn_dir, format='dot')
+
+    # dot = make_dot(model(x), params=dict(model.named_parameters()))
+    # dot.render(filename=f'check', directory=viz_nn_dir, format='dot')
 
 
 @click.command(name='trial')
