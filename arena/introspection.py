@@ -44,20 +44,18 @@ class NodeData(ABC):
 
 
 class ModuleData(NodeData):
-    def __init__(self, module: nn.Module):
+    def __init__(self, class_name: str, params: Dict[TensorId, Tuple[str, List[int]]], fake: bool = False):
         super(ModuleData, self).__init__()
 
-        self.module = module
-
-        d = dict(module.named_parameters(recurse=False))
-        self.module_params = {tensor_id(v): (k, tuple(v.size())) for k, v in d.items()}
-
-        self.module_class_name = str(self.module.__class__).split(".")[-1].split("'")[0]
+        self.class_name = class_name
+        self.params = params
+        self.fake = fake
 
     def __repr__(self):
-        params_str = ', '.join([f'{tid}: {name} {size_to_str(size)}' for tid, (name, size) in self.module_params.items()])
+        fake_str = 'fake_' if self.fake else ''
+        params_str = ', '.join([f'{tid}: {name} {size_to_str(size)}' for tid, (name, size) in self.params.items()])
 
-        return f'module.{self.module_class_name}({params_str})'
+        return f'{fake_str}module.{self.class_name}({params_str})'
 
 
 class VarData(NodeData):
@@ -89,6 +87,12 @@ class VarData(NodeData):
             dump += f' # {self.comment}'
 
         return dump
+
+    def is_variable(self) -> bool:
+        return (self.variable_id is not None) and (self.variable_size is not None)
+
+    def is_param(self) -> bool:
+        return (self.is_variable()) and (self.comment is not None)
 
 
 class Beam(NamedTuple):
@@ -125,11 +129,20 @@ def tensor_id(o) -> TensorId:
 
 class NetworkGraph(object):
     def __init__(self):
-        self.nodes: Dict[GradId, NodeData] = {}     # id -> data
+        self.nodes: Dict[GradId, NodeData] = {}  # id -> data
         self.edges: Dict[GradId, Set[GradId]] = {}  # out -> set(in)
 
     def add_node(self, gid: GradId, data: NodeData):
+        assert gid not in self.nodes
         self.nodes[gid] = data
+
+    def replace_node(self, gid: GradId, data: NodeData):
+        assert gid in self.nodes
+        self.nodes[gid] = data
+
+    def delete_node(self, gid: GradId):
+        assert gid in self.nodes
+        self.nodes.pop(gid, None)
 
     def get_node(self, gid: GradId) -> NodeData:
         return self.nodes[gid]
@@ -141,11 +154,22 @@ class NetworkGraph(object):
         gids_in = self.edges.setdefault(gid_out, set())
         gids_in.add(gid_in)
 
+    def delete_edge(self, gid_in: GradId, gid_out: GradId):
+        assert gid_in in self.nodes
+        assert gid_out in self.nodes
+
+        gids_in = self.edges.get(gid_out) or set()
+        gids_in.remove(gid_in)
+
+    def get_edges(self, gid_out: GradId) -> Set[GradId]:
+        return self.edges.get(gid_out) or set()
+
     def contains(self, gid: GradId) -> bool:
         return gid in self.nodes
 
     def beam_search(self, gid: GradId, control: Callable[[GradId, NodeData], ControlFlow]) -> Optional[Beam]:
-        assert gid in self.nodes
+        if gid not in self.nodes:
+            return None
 
         stack = deque([gid])
 
@@ -332,6 +356,7 @@ def introspect(model: nn.Module, input_size) -> NetworkGraph:
                                                 variable_size=list(tensor.size())))
 
     def compact_graph():
+        # Replace parts of the graph with known modules
         for index, record in enumerate(log):
             for tensor_out in record.output:
                 gid_out = grad_id(tensor_out.grad_fn)
@@ -343,7 +368,11 @@ def introspect(model: nn.Module, input_size) -> NetworkGraph:
                     # Replacing removed nodes with the module data
                     module_id = GradId(id=f'module#{index}')
                     if not network_graph.contains(module_id):
-                        network_graph.add_node(module_id, ModuleData(module=record.module))
+                        d = dict(record.module.named_parameters(recurse=False))
+                        module_params = {tensor_id(v): (k, tuple(v.size())) for k, v in d.items()}
+                        module_class_name = str(record.module.__class__).split(".")[-1].split("'")[0]
+
+                        network_graph.add_node(module_id, ModuleData(class_name=module_class_name, params=module_params))
 
                     attach_or_update_tensor(gid_out, tensor_out, 'Tensor', force_class=True)
                     network_graph.add_edge(module_id, gid_out)
@@ -353,6 +382,44 @@ def introspect(model: nn.Module, input_size) -> NetworkGraph:
                         attach_or_update_tensor(gid_in, tensor_in, 'Tensor', force_class=False)
                         network_graph.add_edge(gid_in, module_id)
 
+        # Combine parameters and functional transformations into fake modules
+        edges_to_delete = []  # [(in, out)]
+        affected_param_nodes = set()
+
+        for gid_out, data_out in network_graph.nodes.items():
+            if isinstance(data_out, VarData):
+                if not data_out.is_variable():
+
+                    module_params = {}
+                    for gid_in in network_graph.get_edges(gid_out):
+                        data_in = network_graph.get_node(gid_in)
+
+                        if isinstance(data_in, VarData):
+                            if data_in.is_param() and len(network_graph.get_edges(gid_in)) == 0:
+                                module_params[data_in.variable_id] = (data_in.comment, data_in.variable_size)
+
+                                edges_to_delete.append((gid_in, gid_out))
+                                affected_param_nodes.add(gid_in)
+
+                    network_graph.replace_node(gid_out, ModuleData(data_out.class_name, module_params, fake=True))
+
+        for gid_in, gid_out in edges_to_delete:
+            network_graph.delete_edge(gid_in, gid_out)
+
+        reverse_edges = {}  # in -> set(out)
+        for gid_out, gids_in in network_graph.edges.items():
+            for gid_in in gids_in:
+                gids_out = reverse_edges.setdefault(gid_in, set())
+                gids_out.add(gid_out)
+
+        nodes_to_delete = []
+        for gid in affected_param_nodes:
+            if len(network_graph.get_edges(gid)) == 0 and len(reverse_edges.get(gid) or set()) == 0:
+                nodes_to_delete.append(gid)
+
+        for gid in nodes_to_delete:
+            network_graph.delete_node(gid)
+
     run_model()
 
     # print(network_graph)
@@ -361,13 +428,12 @@ def introspect(model: nn.Module, input_size) -> NetworkGraph:
 
     compact_graph()
 
-    # print(network_graph)
+    print(network_graph)
 
     return network_graph
 
 
 def make_dot(graph: NetworkGraph) -> Digraph:
-
     def resize_graph(g: Digraph, size_per_element: float = 0.15, min_size: float = 12):
         num_rows = len(g.body)
         content_size = num_rows * size_per_element
@@ -386,21 +452,20 @@ def make_dot(graph: NetworkGraph) -> Digraph:
     for gid, data in graph.nodes.items():
         if isinstance(data, VarData):
             text = f'{data.class_name}'
-            color = 'darkseagreen2'
             if data.comment is not None:
                 text += f'\n{data.comment}'
-                color = 'gray85'
             if data.variable_size is not None:
                 text += f'\n{size_to_str(data.variable_size)}'
-                color = 'gray85'
 
+            color = 'darkseagreen2' if data.class_name != 'Tensor' else 'gray85'
             dot.node(str(gid), text, fillcolor=color)
         elif isinstance(data, ModuleData):
-            text = f'{data.module_class_name}'
-            for _, (name, size) in data.module_params.items():
+            text = f'{data.class_name}'
+            for _, (name, size) in data.params.items():
                 text += f'\n{name} - {size_to_str(size)}'
 
-            dot.node(str(gid), text, fillcolor='lightblue')
+            color = 'darkseagreen2' if data.fake else 'lightblue'
+            dot.node(str(gid), text, fillcolor=color)
         else:
             raise AssertionError(f'Unexpected node data type: {type(data)}')
 

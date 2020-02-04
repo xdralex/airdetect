@@ -22,17 +22,17 @@ from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
 class FuckViz(nn.Module):
     def __init__(self):
         super(FuckViz, self).__init__()
-        # self.l0 = nn.ReLU(inplace=False)
+        self.l0 = nn.ReLU(inplace=False)
         self.l1 = nn.Linear(8, 16)
         self.l2 = nn.Linear(16, 4)
-        # self.l3 = nn.ReLU(inplace=False)
+        self.l3 = nn.ReLU(inplace=False)
 
     def forward(self, x):
-        # x = self.l0(x)
+        x = self.l0(x)
         x = self.l1(x)
         x = torch.nn.functional.relu(x, inplace=False)
         x = self.l2(x)
-        # x = self.l3(x)
+        x = self.l3(x)
         return x
 
 
@@ -59,47 +59,15 @@ def cli_introspect_nn(repo: str, tag: str, network: str, shape: str, device_name
     # model = model.to(device)
     # print(summary(model, input_size=tuple(dims[1:]), batch_size=dims[0]))
 
-    # torchviz
-    #
-    # dims = []
-    # for dim_str in shape.split('x'):
-    #     try:
-    #         dims.append(int(dim_str))
-    #     except ValueError:
-    #         raise click.BadOptionUsage('shape', f'Invalid shape format: "{shape}" - dimension "{dim_str}"')
-    #
-    # model = torch.hub.load(f'{repo}:{tag}', network, pretrained=True, verbose=False)
-    # x = torch.randn(dims)
-    #
-    # dot = make_dot(model(x), params=dict(model.named_parameters()))
-    # dot.render(filename=f'{network}', directory=viz_nn_dir, format='dot')
-
-    # custom
-    #
-
     # model = FuckViz()
     model = torch.hub.load(f'{repo}:{tag}', network, pretrained=True, verbose=False)
 
-
-    # model = nn.Sequential(
-    #     nn.ReLU(inplace=False),
-    #     nn.Linear(8, 16),
-    #     nn.ReLU(inplace=False),
-    #     nn.Linear(16, 4),
-    #     nn.ReLU(inplace=False)
-    # )
-
     device = torch.device(device_name)
     model = model.to(device)
+
     graph = introspect(model, input_size=dims)
     dot = make_dot(graph)
     dot.render(filename=f'resnet18', directory=viz_nn_dir, format='dot')
-
-    # dot = hl.build_graph(model, torch.randn(dims))
-    # dot.render(filename=f'check', directory=viz_nn_dir, format='dot')
-
-    # dot = make_dot(model(x), params=dict(model.named_parameters()))
-    # dot.render(filename=f'check', directory=viz_nn_dir, format='dot')
 
 
 @click.command(name='trial')
