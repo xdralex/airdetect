@@ -23,7 +23,11 @@ def prepare_data(datasets_config: Dict):
 
     aug_transform = albu.Compose([
         albu.HorizontalFlip(p=0.5),
-        albu.ToGray(p=0.1),
+        albu.OneOf([
+            albu.ToGray(p=0.1),
+            albu.RGBShift(r_shift_limit=20, g_shift_limit=20, b_shift_limit=20, p=0.9)
+        ]),
+        albu.CoarseDropout(max_holes=10, max_height=10, max_width=10, min_holes=5, min_height=5, min_width=5, fill_value=0, p=0.5),
         albu.ShiftScaleRotate(shift_limit=0.1,
                               scale_limit=(-0.2, 0.1),
                               rotate_limit=15,
@@ -68,7 +72,6 @@ def fit_resnet(nn_name: str,
     freeze = int(round(hparams['freeze']))
     for index, (name, child) in enumerate(model.named_children()):
         if index < freeze:
-            print(f'Freezing layer {name}')
             for param in child.parameters(recurse=True):
                 param.requires_grad = False
 
