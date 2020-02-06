@@ -15,7 +15,7 @@ from wheel5 import logutils
 from wheel5.dataset import split_eval_main_data
 from wheel5.introspection import introspect, make_dot
 from wheel5.model import score_blend
-from wheel5.tracking import Tracker, Snapshotter
+from wheel5.tracking import Tracker, Snapshotter, TrialTracker
 
 from experiments import prepare_data, fit_resnet
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
@@ -169,7 +169,8 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
 @click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
 @click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
 @click.option('--test', 'test', default='public', type=click.Choice(['public', 'private']), help='public/private test dataset')
-def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, metric_name: str, order: str, test: str):
+@click.option('--hide', 'hide', default='experiment,trial,time,directory', type=str, help='columns to hide')
+def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, metric_name: str, order: str, test: str, hide: str):
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
         return df.sort_values(by=metric_name, ascending=(order == 'asc'))
 
@@ -197,7 +198,8 @@ def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, m
         raise click.BadOptionUsage('test', f'Unsupported test option: "{test}"')
 
     df_top_models = df_model.head(top)
-    print(f'Averaging top models: \n\n{dump(df_top_models)}\n\n\n')
+    drop_cols = [col.strip() for col in hide.split(',')]
+    print(f'Averaging top models: \n\n{dump(df_top_models, drop_cols=drop_cols)}\n\n\n')
 
     models = []
     loss = None
@@ -219,7 +221,8 @@ def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, m
 @click.option('--top', 'top', default=10, type=int, help='number of top trials to show (default: 10')
 @click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
 @click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
-def cli_list_top(experiment: str, top: int, metric_name: str, order: str):
+@click.option('--hide', 'hide', default='experiment,trial,time,directory', type=str, help='columns to hide')
+def cli_list_top(experiment: str, top: int, metric_name: str, order: str, hide: str):
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
         return df.sort_values(by=metric_name, ascending=(order == 'asc'))
 
@@ -232,17 +235,20 @@ def cli_list_top(experiment: str, top: int, metric_name: str, order: str):
     if df_res is None:
         print('No completed trials found')
     else:
+        drop_cols = [col.strip() for col in hide.split(',')]
+
         df_final = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
-        print(f'Final results by trial: \n\n{dump(df_final, top=top)}\n\n\n')
+        print(f'Final results by trial: \n\n{dump(df_final, top=top, drop_cols=drop_cols)}\n\n\n')
 
         df_best = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
-        print(f'Best results by trial: \n\n{dump(df_best, top=top)}\n\n\n')
+        print(f'Best results by trial: \n\n{dump(df_best, top=top, drop_cols=drop_cols)}\n\n\n')
 
 
 @click.command(name='list-all')
 @click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
 @click.option('--all/--snap', 'list_all', default=True, help='list all entries (default) / only entries with snapshots')
-def cli_list_all(experiment: str, list_all: bool):
+@click.option('--hide', 'hide', default='experiment,trial,time,directory', type=str, help='columns to hide')
+def cli_list_all(experiment: str, list_all: bool, hide: str):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
 
@@ -252,11 +258,37 @@ def cli_list_all(experiment: str, list_all: bool):
     if df_res is None:
         print('No completed trials found')
     else:
+        drop_cols = [col.strip() for col in hide.split(',')]
+
         if list_all:
-            print(f'Results: \n\n{dump(df_res)}\n\n\n')
+            print(f'Results: \n\n{dump(df_res, drop_cols=drop_cols)}\n\n\n')
         else:
             df_snap = df_res[df_res['snapshot'] != '']
-            print(f'Results with snapshots: \n\n{dump(df_snap)}\n\n\n')
+            print(f'Results with snapshots: \n\n{dump(df_snap, drop_cols=drop_cols)}\n\n\n')
+
+
+@click.command(name='log-trial')
+@click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
+@click.option('-t', '--trial', 'trial', required=True, type=str, help='trial name')
+@click.option('--all/--snap', 'list_all', default=True, help='list all entries (default) / only entries with snapshots')
+@click.option('--hide', 'hide', default='experiment,trial,time,directory', type=str, help='columns to hide')
+def cli_log_trial(experiment: str, trial: str, list_all: bool, hide: str):
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+
+    snapshot_cfg = snapshot_config(config)
+    df_res = TrialTracker.load_stats(snapshot_cfg, experiment, trial, load_hparams=False, complete_only=False)
+
+    if df_res is None:
+        print('Trial does not have any saved metrics')
+    else:
+        drop_cols = [col.strip() for col in hide.split(',')]
+
+        if list_all:
+            print(f'Results: \n\n{dump(df_res, drop_cols=drop_cols)}\n\n\n')
+        else:
+            df_snap = df_res[df_res['snapshot'] != '']
+            print(f'Results with snapshots: \n\n{dump(df_snap, drop_cols=drop_cols)}\n\n\n')
 
 
 @click.group()
@@ -271,4 +303,5 @@ if __name__ == "__main__":
     cli.add_command(cli_eval_top_blend)
     cli.add_command(cli_list_top)
     cli.add_command(cli_list_all)
+    cli.add_command(cli_log_trial)
     cli()

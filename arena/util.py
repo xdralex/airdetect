@@ -31,7 +31,7 @@ def tensorboard_config(config: Dict) -> TensorboardConfig:
 
 def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[str]] = None) -> str:
     if drop_cols is None:
-        drop_cols = ['experiment', 'trial', 'time', 'directory']
+        drop_cols = []
 
     df = df.drop(columns=drop_cols)
     if top:
