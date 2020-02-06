@@ -18,7 +18,7 @@ fi
 
 pushd "$DIR" > /dev/null || exit
 
-docker run --gpus all --shm-size=8192m -i -t --rm -u apollo -w $WORK $PORT_BINDING \
+docker run --cap-add SYS_PTRACE --gpus all --shm-size=8192m -i -t --rm -u apollo -w $WORK $PORT_BINDING \
        -v "$PWD:$WORK" -v "/data/ssd:/data/ssd" -v "/data/nvme:/data/nvme" "$IMAGE" \
 	     python3.7 arena/cli.py "${@:1}"
 

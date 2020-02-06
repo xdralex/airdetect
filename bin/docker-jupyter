@@ -20,7 +20,7 @@ PORT_BINDING="$PORT_BINDING -p $HOST_JUPYTER_PORT:$CONT_JUPYTER_PORT"
 
 pushd "$DIR" > /dev/null || exit
 
-docker run --gpus all --shm-size=8192m --rm -u apollo -w $WORK $PORT_BINDING \
+docker run --cap-add SYS_PTRACE --gpus all --shm-size=8192m --rm -u apollo -w $WORK $PORT_BINDING \
         -v "$PWD:$WORK" -v "/data/ssd:/data/ssd" -v "/data/nvme:/data/nvme" "$IMAGE" \
         jupyter-notebook \
         --NotebookApp.notebook_dir=$WORK \
