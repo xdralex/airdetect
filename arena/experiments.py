@@ -65,8 +65,17 @@ def fit_resnet(nn_name: str,
 
     loss = nn.CrossEntropyLoss()
 
-    params_old = list([param for name, param in model.named_parameters() if not name.startswith('fc.')])
-    params_new = list([param for name, param in model.named_parameters() if name.startswith('fc.')])
+    freeze = int(round(hparams['freeze']))
+    for index, (name, child) in enumerate(model.named_children()):
+        if index < freeze:
+            print(f'Freezing layer {name}')
+            for param in child.parameters(recurse=True):
+                param.requires_grad = False
+
+    grad_params = [(name, param) for name, param in model.named_parameters() if param.requires_grad]
+
+    params_old = list([param for name, param in grad_params if not name.startswith('fc.')])
+    params_new = list([param for name, param in grad_params if name.startswith('fc.')])
     optimizer_params = [
         {'params': params_old, 'lr': hparams['lrA'], 'weight_decay': hparams['wdA']},
         {'params': params_new, 'lr': hparams['lrB'], 'weight_decay': hparams['wdB']}

@@ -83,10 +83,11 @@ def cli_trial(experiment: str, device_name: str, max_epochs: int):
     val_bundle, train_bundle = split_eval_main_data(pipeline_data.train, 0.2)
 
     hparams = {
-        'lrA': 0.00029833,
-        'lrB': 0.00113499,
-        'wdA': 0.00265031,
-        'wdB': 0.00040662
+        'lrA': 0.000319403,
+        'lrB': 2.38508e-05,
+        'wdA': 0.000406034,
+        'wdB': 0.0104068,
+        'freeze': 4
     }
 
     results = fit_resnet('resnet50',
