@@ -1,27 +1,27 @@
 tracker:
-  tensorboard_root: /data/ssd/run/airliners/tensorboard
-  snapshot_root: /data/ssd/run/airliners/snapshots
+  tensorboard_root: /data/nvme/run/airliners/tensorboard
+  snapshot_root: /data/nvme/run/airliners/snapshots
 
 
 datasets:
   train:
     image_dir: /data/ssd/datasets/airliners/train
-    lmdb_dir: /data/ssd/run/airliners/lmdb/train
     dataframe: /data/ssd/datasets/airliners/train.csv
+    lmdb_dir: /data/nvme/run/airliners/lmdb/train
 
   public_test:
     image_dir: /data/ssd/datasets/airliners/public_test
-    lmdb_dir: /data/ssd/run/airliners/lmdb/public_test
     dataframe: /data/ssd/datasets/airliners/public_test.csv
+    lmdb_dir: /data/nvme/run/airliners/lmdb/public_test
 
   private_test:
     image_dir: /data/ssd/datasets/airliners/private_test
-    lmdb_dir: /data/ssd/run/airliners/lmdb/private_test
     dataframe: /data/ssd/datasets/airliners/private_test.csv
+    lmdb_dir: /data/nvme/run/airliners/lmdb/private_test
 
 
 viz:
-  nn_dir: /data/ssd/run/airliners/viz/networks
+  nn_dir: /data/nvme/run/airliners/viz/networks
 
 
 logging:
@@ -45,14 +45,14 @@ logging:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/ssd/run/airliners/logs/root.out
+      filename: /data/nvme/run/airliners/logs/root.out
       mode: w
 
     root_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/ssd/run/airliners/logs/root.log
+      filename: /data/nvme/run/airliners/logs/root.log
       maxBytes: 134217728
       backupCount: 8
 
@@ -60,14 +60,14 @@ logging:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/ssd/run/airliners/logs/arena.out
+      filename: /data/nvme/run/airliners/logs/arena.out
       mode: w
 
     arena_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/ssd/run/airliners/logs/arena.log
+      filename: /data/nvme/run/airliners/logs/arena.log
       maxBytes: 134217728
       backupCount: 8
 
@@ -75,14 +75,14 @@ logging:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: DEBUG
-      filename: /data/ssd/run/airliners/logs/wheel5.out
+      filename: /data/nvme/run/airliners/logs/wheel5.out
       mode: w
 
     wheel5_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: DEBUG
-      filename: /data/ssd/run/airliners/logs/wheel5.log
+      filename: /data/nvme/run/airliners/logs/wheel5.log
       maxBytes: 134217728
       backupCount: 8
 
