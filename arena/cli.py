@@ -12,11 +12,11 @@ import yaml
 from hyperopt import hp, fmin
 from torchsummary import summary
 from wheel5 import logutils
-from wheel5.dataset import split_eval_main_data
 from wheel5.introspection import introspect, make_dot
 from wheel5.model import score_blend
 from wheel5.tracking import Tracker, Snapshotter, TrialTracker
 
+from data import split_eval_main_data, target_classes
 from experiments import prepare_data, fit_resnet
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
 
@@ -83,10 +83,10 @@ def cli_trial(experiment: str, device_name: str, max_epochs: int):
     val_bundle, train_bundle = split_eval_main_data(pipeline_data.train, 0.2)
 
     hparams = {
-        'lrA': 0.000319403,
-        'lrB': 2.38508e-05,
-        'wdA': 0.000406034,
-        'wdB': 0.0104068,
+        'lrA': 0.000389075,
+        'lrB': 0.000141324,
+        'wdA': 0.128384,
+        'wdB': 0.0150334,
         'freeze': 4
     }
 
@@ -96,7 +96,7 @@ def cli_trial(experiment: str, device_name: str, max_epochs: int):
                          tracker=tracker,
                          train_loader=train_bundle.loader,
                          val_loader=val_bundle.loader,
-                         classes=train_bundle.dataset.wrapped.wrapped.classes(),  # TODO
+                         classes=len(target_classes()),
                          max_epochs=max_epochs,
                          display_progress=True)
 
@@ -134,7 +134,7 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
                              tracker=tracker,
                              train_loader=train_bundle.loader,
                              val_loader=val_bundle.loader,
-                             classes=train_bundle.dataset.wrapped.wrapped.classes(),
+                             classes=len(target_classes()),
                              max_epochs=max_epochs,
                              display_progress=False)
 
@@ -152,7 +152,8 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
             'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1e-3)),
             'wdA': hp.loguniform('wdA', math.log(1e-4), math.log(1)),
             'lrB': hp.loguniform('lrB', math.log(1e-5), math.log(1e-2)),
-            'wdB': hp.loguniform('wdB', math.log(1e-4), math.log(1))
+            'wdB': hp.loguniform('wdB', math.log(1e-4), math.log(1)),
+            'freeze': 4
         }
     }
 

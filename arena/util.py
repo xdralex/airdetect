@@ -18,15 +18,24 @@ def launch_tensorboard(tensorboard_root: str, port: int = 6006):
 
 
 def snapshot_config(config: Dict) -> SnapshotConfig:
-    return SnapshotConfig(root_dir=config['tracker']['snapshot_root'],
-                          snapshotters=[
-                              CheckpointSnapshotter(frequency=20),
-                              BestCVSnapshotter(metric_name='acc', asc=False, top=5),
-                              BestCVSnapshotter(metric_name='loss', asc=True, top=5)])
+    config = config['tracker']['snapshot']
+
+    # snapshotters = [
+    #     CheckpointSnapshotter(frequency=20),
+    #     BestCVSnapshotter(metric_name='acc', asc=False, top=5),
+    #     BestCVSnapshotter(metric_name='loss', asc=True, top=5)
+    # ]
+    snapshotters = []
+
+    return SnapshotConfig(root_dir=config['root'],
+                          snapshotters=snapshotters)
 
 
 def tensorboard_config(config: Dict) -> TensorboardConfig:
-    return TensorboardConfig(root_dir=config['tracker']['tensorboard_root'])
+    config = config['tracker']['tensorboard']
+
+    return TensorboardConfig(root_dir=config['root'],
+                             track_weights=bool(config['track_weights']))
 
 
 def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[str]] = None) -> str:

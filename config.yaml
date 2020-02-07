@@ -1,6 +1,9 @@
 tracker:
-  tensorboard_root: /data/nvme/run/airliners/tensorboard
-  snapshot_root: /data/nvme/run/airliners/snapshots
+  snapshot:
+    root: /data/nvme/run/airliners/snapshots
+  tensorboard:
+    root: /data/nvme/run/airliners/tensorboard
+    track_weights: 1
 
 
 datasets:
