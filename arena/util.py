@@ -4,7 +4,7 @@ from typing import Dict, List, Optional
 import pandas as pd
 from tabulate import tabulate
 from tensorboard import program
-from wheel5.tracking import CheckpointSnapshotter, BestCVSnapshotter, SnapshotConfig, TensorboardConfig
+from wheel5.tracking import SnapshotConfig, TensorboardConfig
 
 
 def launch_tensorboard(tensorboard_root: str, port: int = 6006):

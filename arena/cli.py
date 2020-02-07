@@ -1,8 +1,8 @@
 import json
 import math
+import os
 import re
 from typing import Dict
-import os
 
 import click
 import hyperopt
@@ -16,8 +16,7 @@ from wheel5.introspection import introspect, make_dot
 from wheel5.model import score_blend
 from wheel5.tracking import Tracker, Snapshotter, TrialTracker
 
-from data import split_eval_main_data, target_classes
-from experiments import prepare_data, fit_resnet, sample_transform
+from experiments import fit_resnet, prepare_model_test_bundle, TRANSFORMS_BUNDLE
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
 
 
@@ -75,12 +74,8 @@ def cli_trial(experiment: str, device_name: str, max_epochs: int):
     snapshot_cfg = snapshot_config(config)
     tensorboard_cfg = tensorboard_config(config)
 
-    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=sample_transform())
+    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=TRANSFORMS_BUNDLE.sample)
     launch_tensorboard(tracker.tensorboard_dir)
-
-    pipeline_data = prepare_data(config['datasets'])
-
-    val_bundle, train_bundle = split_eval_main_data(pipeline_data.train, 0.2)
 
     hparams = {
         'lrA': 0.000389075,
@@ -90,13 +85,11 @@ def cli_trial(experiment: str, device_name: str, max_epochs: int):
         'freeze': 4
     }
 
-    results = fit_resnet('resnet50',
-                         hparams,
+    results = fit_resnet(dataset_config=config['datasets'][f'train'],
+                         nn_name='resnet50',
+                         hparams=hparams,
                          device=device,
                          tracker=tracker,
-                         train_loader=train_bundle.loader,
-                         val_loader=val_bundle.loader,
-                         classes=len(target_classes()),
                          max_epochs=max_epochs,
                          display_progress=True)
 
@@ -120,21 +113,15 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
     snapshot_cfg = snapshot_config(config)
     tensorboard_cfg = tensorboard_config(config)
 
-    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=sample_transform())
+    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=TRANSFORMS_BUNDLE.sample)
     launch_tensorboard(tracker.tensorboard_dir)
 
-    pipeline_data = prepare_data(config['datasets'])
-
-    val_bundle, train_bundle = split_eval_main_data(pipeline_data.train, 0.2)
-
     def fit_trial_resnet(hparams: Dict[str, float]):
-        results = fit_resnet('resnet50',
-                             hparams,
+        results = fit_resnet(dataset_config=config['datasets'][f'train'],
+                             nn_name='resnet50',
+                             hparams=hparams,
                              device=device,
                              tracker=tracker,
-                             train_loader=train_bundle.loader,
-                             val_loader=val_bundle.loader,
-                             classes=len(target_classes()),
                              max_epochs=max_epochs,
                              display_progress=False)
 
@@ -190,13 +177,7 @@ def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, m
     else:
         raise click.BadOptionUsage('kind', f'Unsupported kind option: "{kind}"')
 
-    pipeline_data = prepare_data(config['datasets'])
-    if test == 'public':
-        test_bundle = pipeline_data.public_test
-    elif test == 'private':
-        test_bundle = pipeline_data.private_test
-    else:
-        raise click.BadOptionUsage('test', f'Unsupported test option: "{test}"')
+    test_bundle = prepare_model_test_bundle(config['datasets'][f'{test}_test'])
 
     df_top_models = df_model.head(top)
     drop_cols = [col.strip() for col in hide.split(',')]
