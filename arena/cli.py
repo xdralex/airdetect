@@ -17,7 +17,7 @@ from wheel5.model import score_blend
 from wheel5.tracking import Tracker, Snapshotter, TrialTracker
 
 from data import split_eval_main_data, target_classes
-from experiments import prepare_data, fit_resnet
+from experiments import prepare_data, fit_resnet, sample_transform
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
 
 
@@ -75,7 +75,7 @@ def cli_trial(experiment: str, device_name: str, max_epochs: int):
     snapshot_cfg = snapshot_config(config)
     tensorboard_cfg = tensorboard_config(config)
 
-    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment)
+    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=sample_transform())
     launch_tensorboard(tracker.tensorboard_dir)
 
     pipeline_data = prepare_data(config['datasets'])
@@ -120,7 +120,7 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
     snapshot_cfg = snapshot_config(config)
     tensorboard_cfg = tensorboard_config(config)
 
-    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment)
+    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=sample_transform())
     launch_tensorboard(tracker.tensorboard_dir)
 
     pipeline_data = prepare_data(config['datasets'])

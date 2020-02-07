@@ -15,6 +15,14 @@ from wheel5.tracking import Tracker
 from data import load_data
 
 
+normalize_mean = [0.485, 0.456, 0.406]
+normalize_std = [0.229, 0.224, 0.225]
+
+
+def sample_transform():
+    return wheeltr.InvNormalize(mean=normalize_mean, std=normalize_std)
+
+
 def prepare_data(datasets_config: Dict):
     lmdb_transform = transforms.Compose([
         wheeltr.Rescale(scale=0.5, interpolation=Image.LANCZOS),
@@ -40,7 +48,7 @@ def prepare_data(datasets_config: Dict):
     model_transform = transforms.Compose([
         wheeltr.SquarePaddedResize(size=224, interpolation=Image.LANCZOS),
         transforms.ToTensor(),
-        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        transforms.Normalize(mean=normalize_mean, std=normalize_std)
     ])
 
     return load_data(datasets_config,

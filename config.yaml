@@ -4,6 +4,7 @@ tracker:
   tensorboard:
     root: /data/nvme/run/airliners/tensorboard
     track_weights: 1
+    track_samples: 1
 
 
 datasets:

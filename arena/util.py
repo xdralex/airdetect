@@ -35,7 +35,8 @@ def tensorboard_config(config: Dict) -> TensorboardConfig:
     config = config['tracker']['tensorboard']
 
     return TensorboardConfig(root_dir=config['root'],
-                             track_weights=bool(config['track_weights']))
+                             track_weights=bool(config['track_weights']),
+                             track_samples=bool(config['track_samples']))
 
 
 def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[str]] = None) -> str:
