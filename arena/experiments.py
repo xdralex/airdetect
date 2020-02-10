@@ -230,21 +230,25 @@ def fit_model(data_bundle: ModelFitBundle,
                 print(f'{group_name}: {group}')
 
     def prepare_optimizer_params():
+        group_names = []
         optimizer_params = []
-        for _, group in param_groups.items():
+        for group_name, group in param_groups.items():
             if len(group.params) > 0:
                 entry = {'params': group.parameters()}
                 entry.update(group.config)
 
+                group_names.append(group_name)
                 optimizer_params.append(entry)
 
-        return optimizer_params
+        return group_names, optimizer_params
 
     freeze_params()
     init_param_groups()
     print_param_groups()
 
-    optimizer = optim.AdamW(prepare_optimizer_params())
+    prepared_group_names, prepared_optimizer_params = prepare_optimizer_params()
+    optimizer = optim.AdamW(prepared_optimizer_params)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=25)
 
     # Training setup
     trial_tracker = tracker.new_trial(config.hparams)
@@ -255,6 +259,8 @@ def fit_model(data_bundle: ModelFitBundle,
         data_bundle.ctrl.loader,
         loss,
         optimizer,
+        scheduler,
+        group_names=prepared_group_names,
         num_epochs=config.max_epochs,
         tracker=trial_tracker,
         display_progress=display_progress,
