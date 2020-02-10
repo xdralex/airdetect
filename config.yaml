@@ -1,8 +1,8 @@
 tracker:
   snapshot:
-    root: /data/nvme/run/airliners/snapshots
+    root: /data/ssd/run/airliners/snapshots
   tensorboard:
-    root: /data/nvme/run/airliners/tensorboard
+    root: /data/ssd/run/airliners/tensorboard
     track_weights: 1
     track_samples: 1
 
@@ -25,7 +25,7 @@ datasets:
 
 
 viz:
-  nn_dir: /data/nvme/run/airliners/viz/networks
+  nn_dir: /data/ssd/run/airliners/viz/networks
 
 
 logging:
@@ -49,14 +49,14 @@ logging:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/nvme/run/airliners/logs/root.out
+      filename: /data/ssd/run/airliners/logs/root.out
       mode: w
 
     root_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/nvme/run/airliners/logs/root.log
+      filename: /data/ssd/run/airliners/logs/root.log
       maxBytes: 134217728
       backupCount: 8
 
@@ -64,14 +64,14 @@ logging:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/nvme/run/airliners/logs/arena.out
+      filename: /data/ssd/run/airliners/logs/arena.out
       mode: w
 
     arena_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/nvme/run/airliners/logs/arena.log
+      filename: /data/ssd/run/airliners/logs/arena.log
       maxBytes: 134217728
       backupCount: 8
 
@@ -79,14 +79,14 @@ logging:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: DEBUG
-      filename: /data/nvme/run/airliners/logs/wheel5.out
+      filename: /data/ssd/run/airliners/logs/wheel5.out
       mode: w
 
     wheel5_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: DEBUG
-      filename: /data/nvme/run/airliners/logs/wheel5.log
+      filename: /data/ssd/run/airliners/logs/wheel5.log
       maxBytes: 134217728
       backupCount: 8
 

@@ -101,18 +101,16 @@ def make_transforms_bundle():
     # Transform augmenting the data
     aug_transform = albu.Compose([
         albu.HorizontalFlip(p=0.5),
-        albu.OneOf([
-            albu.ToGray(p=0.1),
-            albu.RGBShift(r_shift_limit=20, g_shift_limit=20, b_shift_limit=20, p=0.9)
-        ]),
-        albu.CoarseDropout(max_holes=10, max_height=10, max_width=10, min_holes=5, min_height=5, min_width=5, fill_value=0, p=0.5),
+        albu.HueSaturationValue(hue_shift_limit=30, sat_shift_limit=30, val_shift_limit=30, p=1.0),
         albu.ShiftScaleRotate(shift_limit=0.1,
-                              scale_limit=(-0.2, 0.1),
-                              rotate_limit=15,
+                              scale_limit=(-0.25, 0.15),
+                              rotate_limit=20,
                               border_mode=cv2.BORDER_CONSTANT,
                               value=0,
                               interpolation=cv2.INTER_LANCZOS4,
-                              p=1.0)
+                              p=1.0),
+        albu.CoarseDropout(max_holes=10, max_height=30, max_width=30, min_holes=5, min_height=20, min_width=20, fill_value=0, p=1.0),  # TODO - resize first
+        albu.MultiplicativeNoise(multiplier=(0.9, 1.1), p=1.0)                                                                         # TODO - resize first
     ])
 
     # Transform preparing the data to be processed by the model
