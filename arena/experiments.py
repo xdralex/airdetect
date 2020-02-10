@@ -1,4 +1,4 @@
-from typing import Dict, Union, NamedTuple
+from typing import Dict, Union, NamedTuple, Tuple, List
 
 import albumentations as albu
 import cv2
@@ -9,12 +9,60 @@ from PIL import Image
 from numpy.random.mtrand import RandomState
 from torch import nn
 from torch import optim
+from torch.nn import Parameter
 from torchvision import transforms
 from wheel5.dataset import TransformDataset, AlbumentationsDataset
 from wheel5.model import fit
 from wheel5.tracking import Tracker
 
 from data import DataBundle, load_dataset, prepare_train_bundle, prepare_eval_bundle, prepare_test_bundle, Transform
+
+
+class TransformsBundle(NamedTuple):
+    store: Transform
+    aug: albu.BasicTransform
+    model: Transform
+    sample: Transform
+
+
+class ExperimentConfig(NamedTuple):
+    repo: str
+    tag: str
+    network: str
+    hparams: Dict[str, float]
+    max_epochs: int
+    freeze: int
+
+
+class ModelFitBundle(NamedTuple):
+    train: DataBundle
+    val: DataBundle
+    ctrl: DataBundle
+
+
+class ParamGroup(object):
+    def __init__(self, config: Dict[str, float]):
+        self.config: Dict[str, float] = config
+        self.params: List[Tuple[str, Parameter]] = []
+
+    def parameters(self) -> List[Parameter]:
+        return [param for _, param in self.params]
+
+    def __repr__(self):
+        dump = 'ParamGroup(\n'
+
+        dump += '  config:\n'
+        for k, v in self.config.items():
+            dump += f'    {k} -> {v:.8f}\n'
+
+        dump += '  params:\n'
+        for param_name, param in self.params:
+            param_shape = 'x'.join([str(dim) for dim in param.shape])
+            dump += f'    {param_name} - {param_shape}\n'
+
+        dump += ')\n'
+
+        return dump
 
 
 def make_target_classes():
@@ -38,13 +86,6 @@ def make_target_classes():
             'B777-300',
             'MD-11',
             'MD-80']
-
-
-class TransformsBundle(NamedTuple):
-    store: Transform
-    aug: albu.BasicTransform
-    model: Transform
-    sample: Transform
 
 
 def make_transforms_bundle():
@@ -103,7 +144,7 @@ def prepare_model_test_bundle(dataset_config: Dict[str, str]) -> DataBundle:
     return bundle
 
 
-def prepare_model_fit_bundles(dataset_config: Dict[str, str]):
+def prepare_model_fit_bundle(dataset_config: Dict[str, str]) -> ModelFitBundle:
     dataset = load_dataset(dataset_config, TARGET_CLASSES, TRANSFORMS_BUNDLE.store)
 
     # Indices
@@ -128,18 +169,17 @@ def prepare_model_fit_bundles(dataset_config: Dict[str, str]):
     ctrl_dataset = TransformDataset(dataset, TRANSFORMS_BUNDLE.model)
     ctrl_bundle = prepare_eval_bundle(ctrl_dataset, list(ctrl_indices), randomize=False)
 
-    return train_bundle, val_bundle, ctrl_bundle
+    return ModelFitBundle(train=train_bundle, val=val_bundle, ctrl=ctrl_bundle)
 
 
-def fit_resnet(dataset_config: Dict[str, str],
-               nn_name: str,
-               hparams: Dict[str, float],
-               device: Union[torch.device, int],
-               tracker: Tracker,
-               max_epochs: int,
-               display_progress: bool) -> Dict[str, float]:
+def fit_model(data_bundle: ModelFitBundle,
+              config: ExperimentConfig,
+              device: Union[torch.device, int],
+              tracker: Tracker,
+              debug: bool,
+              display_progress: bool) -> Dict[str, float]:
     # Model preparation
-    model = torch.hub.load('pytorch/vision:v0.4.2', nn_name, pretrained=True, verbose=False)
+    model = torch.hub.load(f'{config.repo}:{config.tag}', config.network, pretrained=True, verbose=False)
 
     old_fc = model.fc
     model.fc = nn.Linear(in_features=old_fc.in_features, out_features=len(TARGET_CLASSES))
@@ -149,38 +189,78 @@ def fit_resnet(dataset_config: Dict[str, str],
 
     loss = nn.CrossEntropyLoss()
 
-    freeze = int(round(hparams['freeze']))
-    for index, (name, child) in enumerate(model.named_children()):
-        if index < freeze:
-            for param in child.parameters(recurse=True):
-                param.requires_grad = False
+    param_groups = {
+        'A': ParamGroup({'lr': config.hparams['lrA'], 'weight_decay': config.hparams['wdA']}),
+        'A_no_decay': ParamGroup({'lr': config.hparams['lrA'], 'weight_decay': 0}),
+        'B': ParamGroup({'lr': config.hparams['lrB'], 'weight_decay': config.hparams['wdB']}),
+        'B_no_decay': ParamGroup({'lr': config.hparams['lrB'], 'weight_decay': 0})
+    }
 
-    grad_params = [(name, param) for name, param in model.named_parameters() if param.requires_grad]
+    def add_param(group_name: str, module_name: str, param_name: str, param: Parameter):
+        if param.requires_grad:
+            group = param_groups[group_name]
+            group.params.append((f'{module_name}.{param_name}', param))
 
-    params_old = list([param for name, param in grad_params if not name.startswith('fc.')])
-    params_new = list([param for name, param in grad_params if name.startswith('fc.')])
-    optimizer_params = [
-        {'params': params_old, 'lr': hparams['lrA'], 'weight_decay': hparams['wdA']},
-        {'params': params_new, 'lr': hparams['lrB'], 'weight_decay': hparams['wdB']}
-    ]
-    optimizer = optim.AdamW(optimizer_params)
+    def freeze_params():
+        for index, (name, child) in enumerate(model.named_children()):
+            if index < config.freeze:
+                if debug:
+                    print(f'Freezing layer {name}')
 
-    # Data loading
-    train_bundle, val_bundle, ctrl_bundle = prepare_model_fit_bundles(dataset_config)
+                for param in child.parameters(recurse=True):
+                    param.requires_grad = False
+
+    def init_param_groups():
+        for module_name, module in model.named_modules():
+            if isinstance(module, torch.nn.modules.batchnorm.BatchNorm2d):
+                for param_name, param in module.named_parameters(recurse=False):
+                    add_param('A_no_decay', module_name, param_name, param)
+
+            elif module_name == 'fc':
+                for param_name, param in module.named_parameters(recurse=False):
+                    group = 'B_no_decay' if param_name == 'bias' else 'B'
+                    add_param(group, module_name, param_name, param)
+
+            else:
+                for param_name, param in module.named_parameters(recurse=False):
+                    group = 'A_no_decay' if param_name == 'bias' else 'A'
+                    add_param(group, module_name, param_name, param)
+
+    def print_param_groups():
+        if debug:
+            for group_name, group in param_groups.items():
+                print(f'{group_name}: {group}')
+
+    def prepare_optimizer_params():
+        optimizer_params = []
+        for _, group in param_groups.items():
+            if len(group.params) > 0:
+                entry = {'params': group.parameters()}
+                entry.update(group.config)
+
+                optimizer_params.append(entry)
+
+        return optimizer_params
+
+    freeze_params()
+    init_param_groups()
+    print_param_groups()
+
+    optimizer = optim.AdamW(prepare_optimizer_params())
 
     # Training setup
-    trial_tracker = tracker.new_trial(hparams)
+    trial_tracker = tracker.new_trial(config.hparams)
     fit(device,
         model,
-        train_bundle.loader,
-        val_bundle.loader,
-        ctrl_bundle.loader,
+        data_bundle.train.loader,
+        data_bundle.val.loader,
+        data_bundle.ctrl.loader,
         loss,
         optimizer,
-        num_epochs=max_epochs,
+        num_epochs=config.max_epochs,
         tracker=trial_tracker,
         display_progress=display_progress,
-        sampled_epochs=10)
+        sampled_epochs=config.max_epochs)
 
     # Reporting
     metrics_df = trial_tracker.metrics_df

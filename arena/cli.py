@@ -2,7 +2,7 @@ import json
 import math
 import os
 import re
-from typing import Dict
+from typing import Dict, Optional
 
 import click
 import hyperopt
@@ -10,14 +10,124 @@ import pandas as pd
 import torch
 import yaml
 from hyperopt import hp, fmin
+from torch import nn
 from torchsummary import summary
 from wheel5 import logutils
 from wheel5.introspection import introspect, make_dot
 from wheel5.model import score_blend
 from wheel5.tracking import Tracker, Snapshotter, TrialTracker
 
-from experiments import fit_resnet, prepare_model_test_bundle, TRANSFORMS_BUNDLE
+from experiments import ExperimentConfig, fit_model, prepare_model_test_bundle, prepare_model_fit_bundle, TRANSFORMS_BUNDLE
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
+
+
+@click.command(name='trial')
+@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
+@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
+@click.option('-r', '--repo', 'repo', default='pytorch/vision', help='repository (e.g. pytorch/vision)', type=str)
+@click.option('-t', '--tag', 'tag', default='v0.4.2', help='tag (e.g. v0.4.2)', type=str)
+@click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
+@click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
+@click.option('--freeze', 'freeze', default=-1, help='freeze first K layers', type=int)
+def cli_trial(experiment: str, device_name: str, repo: str, tag: str, network: str, max_epochs: int, freeze: int):
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
+
+    device = torch.device(device_name)
+
+    snapshot_cfg = snapshot_config(config)
+    tensorboard_cfg = tensorboard_config(config)
+
+    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=TRANSFORMS_BUNDLE.sample)
+    launch_tensorboard(tracker.tensorboard_dir)
+
+    hparams = {
+        'lrA': 0.000389075,
+        'lrB': 0.000141324,
+        'wdA': 0.208384,
+        'wdB': 0.0350334
+    }
+
+    data_bundle = prepare_model_fit_bundle(config['datasets'][f'train'])
+    experiment_config = ExperimentConfig(repo=repo,
+                                         tag=tag,
+                                         network=network,
+                                         hparams=hparams,
+                                         max_epochs=max_epochs,
+                                         freeze=freeze)
+
+    results = fit_model(data_bundle=data_bundle,
+                        config=experiment_config,
+                        device=device,
+                        tracker=tracker,
+                        debug=True,
+                        display_progress=True)
+
+    print(json.dumps(results, indent=4))
+
+    input("\nTrial completed, press Enter to exit (this will terminate TensorBoard)\n")
+
+
+@click.command(name='search')
+@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
+@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
+@click.option('-t', '--trials', 'trials', required=True, help='number of trials to perform', type=int)
+@click.option('-r', '--repo', 'repo', default='pytorch/vision', help='repository (e.g. pytorch/vision)', type=str)
+@click.option('-t', '--tag', 'tag', default='v0.4.2', help='tag (e.g. v0.4.2)', type=str)
+@click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
+@click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
+@click.option('--freeze', 'freeze', default=-1, help='freeze first K layers (set to negative or zero to disable)', type=int)
+def cli_search(experiment: str, device_name: str, repo: str, tag: str, network: str, trials: int, max_epochs: int, freeze: int):
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
+
+    device = torch.device(device_name)
+
+    snapshot_cfg = snapshot_config(config)
+    tensorboard_cfg = tensorboard_config(config)
+
+    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=TRANSFORMS_BUNDLE.sample)
+    launch_tensorboard(tracker.tensorboard_dir)
+
+    def fit_model_trial(hparams: Dict[str, float]):
+        data_bundle = prepare_model_fit_bundle(config['datasets'][f'train'])
+        experiment_config = ExperimentConfig(repo=repo,
+                                             tag=tag,
+                                             network=network,
+                                             hparams=hparams,
+                                             max_epochs=max_epochs,
+                                             freeze=freeze)
+
+        results = fit_model(data_bundle=data_bundle,
+                            config=experiment_config,
+                            device=device,
+                            tracker=tracker,
+                            debug=False,
+                            display_progress=False)
+
+        return results['hp/best_val_loss']
+
+    space = {
+        'resnet18_broad': {
+            'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1)),
+            'wdA': hp.loguniform('wdA', math.log(1e-4), math.log(1)),
+            'lrB': hp.loguniform('lrB', math.log(1e-5), math.log(1)),
+            'wdB': hp.loguniform('wdB', math.log(1e-4), math.log(1))
+        },
+
+        'resnet50_narrow': {
+            'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1e-3)),
+            'wdA': hp.loguniform('wdA', math.log(1e-4), math.log(1)),
+            'lrB': hp.loguniform('lrB', math.log(1e-5), math.log(1e-2)),
+            'wdB': hp.loguniform('wdB', math.log(1e-4), math.log(1))
+        }
+    }
+
+    fmin(fit_model_trial, space=space['resnet50_narrow'], algo=hyperopt.rand.suggest, max_evals=trials)
+
+    input("\nSearch completed, press Enter to exit (this will terminate TensorBoard)\n")
 
 
 @click.command(name='introspect-nn')
@@ -44,11 +154,33 @@ def cli_introspect_nn(repo: str, tag: str, network: str, shape: str, device_name
     device = torch.device(device_name)
     model = model.to(device)
 
-    print(f'Model:\n{model}\n')
+    def print_model_params(module_name: Optional[str], module: nn.Module, depth: int = 0):
+        indent: str = ' ' * 4
+
+        module_name_qual = f'{module_name}: ' if module_name else ''
+        module_type = type(module)
+        print(f'{indent * depth}{module_name_qual}{module_type.__module__}.{module_type.__name__}')
+
+        depth = depth + 1
+
+        for name, param in module.named_parameters(recurse=False):
+            param_name_qual = f'{module_name}.{name}' if module_name else f'{name}'
+            param_shape = 'x'.join([str(dim) for dim in param.shape])
+            print(f'{indent * depth}{param_name_qual} - {param_shape}')
+
+        for name, child in module.named_children():
+            child_name_qual = f'{module_name}.{name}' if module_name else f'{name}'
+            print_model_params(f'{indent * depth}{child_name_qual}', child, depth)
+
+    print(f'Model:\n{model}\n\n')
+
+    print(f'Parameters:\n')
+    print_model_params(module_name=None, module=model)
+    print('\n')
 
     print(f'Summary:\n')
     summary(model, input_size=tuple(dims[1:]), batch_size=dims[0])
-    print('')
+    print('\n')
 
     graph = introspect(model, input_size=dims)
     dot = make_dot(graph)
@@ -60,95 +192,6 @@ def cli_introspect_nn(repo: str, tag: str, network: str, shape: str, device_name
     print(f'Dot file saved to: {os.path.join(viz_nn_dir, filename)}.dot')
 
 
-@click.command(name='trial')
-@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
-@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
-@click.option('-m', '--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
-def cli_trial(experiment: str, device_name: str, max_epochs: int):
-    with open('config.yaml', 'r') as config_file:
-        config = yaml.load(config_file, Loader=yaml.Loader)
-        logutils.configure_logging(config['logging'])
-
-    device = torch.device(device_name)
-
-    snapshot_cfg = snapshot_config(config)
-    tensorboard_cfg = tensorboard_config(config)
-
-    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=TRANSFORMS_BUNDLE.sample)
-    launch_tensorboard(tracker.tensorboard_dir)
-
-    hparams = {
-        'lrA': 0.000389075,
-        'lrB': 0.000141324,
-        'wdA': 0.128384,
-        'wdB': 0.0150334,
-        'freeze': 4
-    }
-
-    results = fit_resnet(dataset_config=config['datasets'][f'train'],
-                         nn_name='resnet50',
-                         hparams=hparams,
-                         device=device,
-                         tracker=tracker,
-                         max_epochs=max_epochs,
-                         display_progress=True)
-
-    print(json.dumps(results, indent=4))
-
-    input("\nTrial completed, press Enter to exit (this will terminate TensorBoard)\n")
-
-
-@click.command(name='search')
-@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
-@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
-@click.option('-t', '--trials', 'trials', required=True, help='number of trials to perform', type=int)
-@click.option('-m', '--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
-def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
-    with open('config.yaml', 'r') as config_file:
-        config = yaml.load(config_file, Loader=yaml.Loader)
-        logutils.configure_logging(config['logging'])
-
-    device = torch.device(device_name)
-
-    snapshot_cfg = snapshot_config(config)
-    tensorboard_cfg = tensorboard_config(config)
-
-    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=TRANSFORMS_BUNDLE.sample)
-    launch_tensorboard(tracker.tensorboard_dir)
-
-    def fit_trial_resnet(hparams: Dict[str, float]):
-        results = fit_resnet(dataset_config=config['datasets'][f'train'],
-                             nn_name='resnet50',
-                             hparams=hparams,
-                             device=device,
-                             tracker=tracker,
-                             max_epochs=max_epochs,
-                             display_progress=False)
-
-        return results['hp/best_val_loss']
-
-    space = {
-        'resnet18_broad': {
-            'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1)),
-            'wdA': hp.loguniform('wdA', math.log(1e-4), math.log(1)),
-            'lrB': hp.loguniform('lrB', math.log(1e-5), math.log(1)),
-            'wdB': hp.loguniform('wdB', math.log(1e-4), math.log(1))
-        },
-
-        'resnet50_narrow': {
-            'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1e-3)),
-            'wdA': hp.loguniform('wdA', math.log(1e-4), math.log(1)),
-            'lrB': hp.loguniform('lrB', math.log(1e-5), math.log(1e-2)),
-            'wdB': hp.loguniform('wdB', math.log(1e-4), math.log(1)),
-            'freeze': 4
-        }
-    }
-
-    fmin(fit_trial_resnet, space=space['resnet50_narrow'], algo=hyperopt.rand.suggest, max_evals=trials)
-
-    input("\nSearch completed, press Enter to exit (this will terminate TensorBoard)\n")
-
-
 @click.command(name='eval-top-blend')
 @click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
 @click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
@@ -157,7 +200,7 @@ def cli_search(experiment: str, device_name: str, trials: int, max_epochs: int):
 @click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
 @click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
 @click.option('--test', 'test', default='public', type=click.Choice(['public', 'private']), help='public/private test dataset')
-@click.option('--hide', 'hide', default='experiment,trial,time,directory', type=str, help='columns to hide')
+@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
 def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, metric_name: str, order: str, test: str, hide: str):
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
         return df.sort_values(by=metric_name, ascending=(order == 'asc'))
@@ -203,7 +246,7 @@ def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, m
 @click.option('--top', 'top', default=10, type=int, help='number of top trials to show (default: 10')
 @click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
 @click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
-@click.option('--hide', 'hide', default='experiment,trial,time,directory', type=str, help='columns to hide')
+@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
 def cli_list_top(experiment: str, top: int, metric_name: str, order: str, hide: str):
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
         return df.sort_values(by=metric_name, ascending=(order == 'asc'))
@@ -229,7 +272,7 @@ def cli_list_top(experiment: str, top: int, metric_name: str, order: str, hide: 
 @click.command(name='list-all')
 @click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
 @click.option('--all/--snap', 'list_all', default=True, help='list all entries (default) / only entries with snapshots')
-@click.option('--hide', 'hide', default='experiment,trial,time,directory', type=str, help='columns to hide')
+@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
 def cli_list_all(experiment: str, list_all: bool, hide: str):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
@@ -253,7 +296,7 @@ def cli_list_all(experiment: str, list_all: bool, hide: str):
 @click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
 @click.option('-t', '--trial', 'trial', required=True, type=str, help='trial name')
 @click.option('--all/--snap', 'list_all', default=True, help='list all entries (default) / only entries with snapshots')
-@click.option('--hide', 'hide', default='experiment,trial,time,directory', type=str, help='columns to hide')
+@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
 def cli_log_trial(experiment: str, trial: str, list_all: bool, hide: str):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
@@ -279,11 +322,14 @@ def cli():
 
 
 if __name__ == "__main__":
-    cli.add_command(cli_introspect_nn)
     cli.add_command(cli_trial)
     cli.add_command(cli_search)
+
+    cli.add_command(cli_introspect_nn)
+
     cli.add_command(cli_eval_top_blend)
     cli.add_command(cli_list_top)
     cli.add_command(cli_list_all)
     cli.add_command(cli_log_trial)
+
     cli()
