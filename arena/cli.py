@@ -46,7 +46,7 @@ def cli_trial(experiment: str, device_name: str, repo: str, tag: str, network: s
         'lrA': 0.000389075,
         'lrB': 0.000141324,
         'wdA': 0.208384,
-        'wdB': 0.0350334
+        'wdB': 0.1350334
     }
 
     data_bundle = prepare_model_fit_bundle(config['datasets'][f'train'])
@@ -72,10 +72,10 @@ def cli_trial(experiment: str, device_name: str, repo: str, tag: str, network: s
 @click.command(name='search')
 @click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
 @click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
-@click.option('-t', '--trials', 'trials', required=True, help='number of trials to perform', type=int)
 @click.option('-r', '--repo', 'repo', default='pytorch/vision', help='repository (e.g. pytorch/vision)', type=str)
 @click.option('-t', '--tag', 'tag', default='v0.4.2', help='tag (e.g. v0.4.2)', type=str)
 @click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
+@click.option('--trials', 'trials', required=True, help='number of trials to perform', type=int)
 @click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
 @click.option('--freeze', 'freeze', default=-1, help='freeze first K layers (set to negative or zero to disable)', type=int)
 def cli_search(experiment: str, device_name: str, repo: str, tag: str, network: str, trials: int, max_epochs: int, freeze: int):
@@ -110,18 +110,11 @@ def cli_search(experiment: str, device_name: str, repo: str, tag: str, network: 
         return results['hp/best_val_loss']
 
     space = {
-        'resnet18_broad': {
-            'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1)),
-            'wdA': hp.loguniform('wdA', math.log(1e-4), math.log(1)),
-            'lrB': hp.loguniform('lrB', math.log(1e-5), math.log(1)),
-            'wdB': hp.loguniform('wdB', math.log(1e-4), math.log(1))
-        },
-
         'resnet50_narrow': {
-            'lrA': hp.loguniform('lrA', math.log(1e-5), math.log(1e-3)),
-            'wdA': hp.loguniform('wdA', math.log(1e-4), math.log(1)),
-            'lrB': hp.loguniform('lrB', math.log(1e-5), math.log(1e-2)),
-            'wdB': hp.loguniform('wdB', math.log(1e-4), math.log(1))
+            'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-3)),
+            'wdA': hp.loguniform('wdA', math.log(1e-2), math.log(1)),
+            'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-3)),
+            'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1))
         }
     }
 
@@ -211,7 +204,7 @@ def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, m
     device = torch.device(device_name)
 
     snapshot_cfg = snapshot_config(config)
-    df_res = Tracker.load_stats(snapshot_cfg, experiment)
+    df_res = Tracker.load_trial_stats(snapshot_cfg, experiment)
 
     if kind == 'final':
         df_model = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
@@ -241,13 +234,14 @@ def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, m
     print(score_blend(device, models, test_bundle.loader, loss))
 
 
-@click.command(name='list-top')
+@click.command(name='list-top-trials')
 @click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
 @click.option('--top', 'top', default=10, type=int, help='number of top trials to show (default: 10')
 @click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
 @click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
+@click.option('--all/--snap', 'list_all', default=False, help='list all entries (default) / only entries with snapshots')
 @click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
-def cli_list_top(experiment: str, top: int, metric_name: str, order: str, hide: str):
+def cli_list_top_trials(experiment: str, top: int, metric_name: str, order: str, list_all: bool, hide: str):
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
         return df.sort_values(by=metric_name, ascending=(order == 'asc'))
 
@@ -255,65 +249,72 @@ def cli_list_top(experiment: str, top: int, metric_name: str, order: str, hide: 
         config = yaml.load(config_file, Loader=yaml.Loader)
 
     snapshot_cfg = snapshot_config(config)
-    df_res = Tracker.load_stats(snapshot_cfg, experiment)
+    df_res = Tracker.load_trial_stats(snapshot_cfg, experiment)
 
     if df_res is None:
         print('No completed trials found')
     else:
         drop_cols = [col.strip() for col in hide.split(',')]
 
-        df_final = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
+        df_snap = df_res if list_all else df_res[df_res['snapshot'] != '']
+
+        df_final = metric_sort(df_snap[df_snap['epoch'] == df_snap['num_epochs']])
         print(f'Final results by trial: \n\n{dump(df_final, top=top, drop_cols=drop_cols)}\n\n\n')
 
-        df_best = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
+        df_best = metric_sort(df_snap.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
         print(f'Best results by trial: \n\n{dump(df_best, top=top, drop_cols=drop_cols)}\n\n\n')
 
 
-@click.command(name='list-all')
+@click.command(name='list-all-trials')
 @click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
-@click.option('--all/--snap', 'list_all', default=True, help='list all entries (default) / only entries with snapshots')
+@click.option('--all/--snap', 'list_all', default=False, help='list all entries (default) / only entries with snapshots')
 @click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
-def cli_list_all(experiment: str, list_all: bool, hide: str):
+def cli_list_all_trials(experiment: str, list_all: bool, hide: str):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
 
     snapshot_cfg = snapshot_config(config)
-    df_res = Tracker.load_stats(snapshot_cfg, experiment)
+    df_res = Tracker.load_trial_stats(snapshot_cfg, experiment)
 
     if df_res is None:
         print('No completed trials found')
     else:
         drop_cols = [col.strip() for col in hide.split(',')]
 
-        if list_all:
-            print(f'Results: \n\n{dump(df_res, drop_cols=drop_cols)}\n\n\n')
-        else:
-            df_snap = df_res[df_res['snapshot'] != '']
-            print(f'Results with snapshots: \n\n{dump(df_snap, drop_cols=drop_cols)}\n\n\n')
+        df_snap = df_res if list_all else df_res[df_res['snapshot'] != '']
+        print(f'Results: \n\n{dump(df_snap, drop_cols=drop_cols)}\n\n\n')
 
 
-@click.command(name='log-trial')
+@click.command(name='list-trial')
 @click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
 @click.option('-t', '--trial', 'trial', required=True, type=str, help='trial name')
 @click.option('--all/--snap', 'list_all', default=True, help='list all entries (default) / only entries with snapshots')
 @click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
-def cli_log_trial(experiment: str, trial: str, list_all: bool, hide: str):
+def cli_list_trial(experiment: str, trial: str, list_all: bool, hide: str):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
 
     snapshot_cfg = snapshot_config(config)
-    df_res = TrialTracker.load_stats(snapshot_cfg, experiment, trial, load_hparams=False, complete_only=False)
+    df_res = TrialTracker.load_trial_stats(snapshot_cfg, experiment, trial, load_hparams=False, complete_only=False)
 
     if df_res is None:
         print('Trial does not have any saved metrics')
     else:
         drop_cols = [col.strip() for col in hide.split(',')]
 
-        if list_all:
-            print(f'Results: \n\n{dump(df_res, drop_cols=drop_cols)}\n\n\n')
-        else:
-            df_snap = df_res[df_res['snapshot'] != '']
-            print(f'Results with snapshots: \n\n{dump(df_snap, drop_cols=drop_cols)}\n\n\n')
+        df_snap = df_res if list_all else df_res[df_res['snapshot'] != '']
+        print(f'Results: \n\n{dump(df_snap, drop_cols=drop_cols)}\n\n\n')
+
+
+@click.command(name='list-experiments')
+def cli_list_experiments():
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+
+    snapshot_cfg = snapshot_config(config)
+    df_experiments = Tracker.load_experiment_stats(snapshot_cfg)
+
+    print(f'Experiments: \n\n{dump(df_experiments.sort_values(by="experiment"))}\n\n\n')
 
 
 @click.group()
@@ -328,8 +329,10 @@ if __name__ == "__main__":
     cli.add_command(cli_introspect_nn)
 
     cli.add_command(cli_eval_top_blend)
-    cli.add_command(cli_list_top)
-    cli.add_command(cli_list_all)
-    cli.add_command(cli_log_trial)
+    cli.add_command(cli_list_top_trials)
+    cli.add_command(cli_list_all_trials)
+    cli.add_command(cli_list_trial)
+
+    cli.add_command(cli_list_experiments)
 
     cli()
