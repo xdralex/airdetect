@@ -43,10 +43,11 @@ def cli_trial(experiment: str, device_name: str, repo: str, tag: str, network: s
     launch_tensorboard(tracker.tensorboard_dir)
 
     hparams = {
-        'lrA': 0.0003,
-        'lrB': 0.0003,
-        'wdA': 0.8,
-        'wdB': 0.8
+        'lrA': 0.000280076,
+        'lrB': 0.000272109,
+        'wdA': 4.0,
+        'wdB': 4.0,
+        'anneal_t0': 60
     }
 
     data_bundle = prepare_model_fit_bundle(config['datasets'][f'train'])
@@ -111,10 +112,18 @@ def cli_search(experiment: str, device_name: str, repo: str, tag: str, network: 
 
     space = {
         'resnet50_narrow': {
-            'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-3)),
-            'wdA': hp.loguniform('wdA', math.log(1e-2), math.log(1)),
-            'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-3)),
-            'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1))
+            'lrA': hp.uniform('lrA', 2e-4, 4e-4),
+            'wdA': hp.uniform('wdA', 5e-1, 1.5),
+            'lrB': hp.uniform('lrB', 2e-4, 4e-4),
+            'wdB': hp.uniform('wdB', 5e-1, 1.5),
+            'anneal_t0': hp.uniform('anneal_t0', 20, 40)
+        },
+        'resnet50_narrow2': {
+            'lrA': hp.uniform('lrA', 2e-4, 5e-4),
+            'wdA': hp.uniform('wdA', 5e-1, 3),
+            'lrB': hp.uniform('lrB', 2e-4, 5e-4),
+            'wdB': hp.uniform('wdB', 5e-1, 3),
+            'anneal_t0': hp.uniform('anneal_t0', 20, 40)
         }
     }
 
@@ -205,6 +214,7 @@ def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, m
 
     snapshot_cfg = snapshot_config(config)
     df_res = Tracker.load_trial_stats(snapshot_cfg, experiment)
+    df_res = df_res[df_res['snapshot'] != '']
 
     if kind == 'final':
         df_model = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])

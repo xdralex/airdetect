@@ -1,10 +1,11 @@
-from typing import Dict, Union, NamedTuple, Tuple, List
+from typing import Dict, Union, NamedTuple, Tuple, List, Optional
 
 import albumentations as albu
 import cv2
 import numpy as np
 import torch
-import wheel5.transforms as wheeltr
+import wheel5.transforms_torchvision as wheeltr_torch
+import wheel5.transforms_albumentations as wheeltr_albu
 from PIL import Image
 from numpy.random.mtrand import RandomState
 from torch import nn
@@ -20,9 +21,10 @@ from data import DataBundle, load_dataset, prepare_train_bundle, prepare_eval_bu
 
 class TransformsBundle(NamedTuple):
     store: Transform
-    aug: albu.BasicTransform
+    train: albu.BasicTransform
+    eval: albu.BasicTransform
     model: Transform
-    sample: Transform
+    sample: Optional[Transform]
 
 
 class ExperimentConfig(NamedTuple):
@@ -92,40 +94,57 @@ def make_transforms_bundle():
     normalize_mean = [0.485, 0.456, 0.406]
     normalize_std = [0.229, 0.224, 0.225]
 
+    mean_color = tuple([int(round(c * 255)) for c in normalize_mean])
+
     # Transform applied when the data is preprocessed into the store
     store_transform = transforms.Compose([
-        wheeltr.Rescale(scale=0.5, interpolation=Image.LANCZOS),
-        wheeltr.PadToSquare()
+        wheeltr_torch.Rescale(scale=0.5, interpolation=Image.LANCZOS)
     ])
 
-    # Transform augmenting the data
-    aug_transform = albu.Compose([
-        albu.HorizontalFlip(p=0.5),
+    # Train/Eval transforms
+    train_transform = albu.Compose([
         albu.HueSaturationValue(hue_shift_limit=30, sat_shift_limit=30, val_shift_limit=30, p=1.0),
+        albu.HorizontalFlip(p=0.5),
+
+        wheeltr_albu.PadToSquare(fill=mean_color),
         albu.ShiftScaleRotate(shift_limit=0.1,
                               scale_limit=(-0.25, 0.15),
                               rotate_limit=20,
                               border_mode=cv2.BORDER_CONSTANT,
-                              value=0,
+                              value=mean_color,
                               interpolation=cv2.INTER_LANCZOS4,
                               p=1.0),
-        albu.CoarseDropout(max_holes=10, max_height=30, max_width=30, min_holes=5, min_height=20, min_width=20, fill_value=0, p=1.0),  # TODO - resize first
-        albu.MultiplicativeNoise(multiplier=(0.9, 1.1), p=1.0)                                                                         # TODO - resize first
+
+        wheeltr_albu.Resize(height=224, width=224, interpolation=cv2.INTER_LANCZOS4),
+        albu.MultiplicativeNoise(multiplier=(0.9, 1.1), p=1.0),
+        albu.CoarseDropout(max_holes=12,
+                           max_height=12,
+                           max_width=12,
+                           min_holes=6,
+                           min_height=6,
+                           min_width=6,
+                           fill_value=mean_color,
+                           p=1.0)
+    ])
+
+    eval_transform = albu.Compose([
+        wheeltr_albu.PadToSquare(fill=mean_color),
+        wheeltr_albu.Resize(height=224, width=224, interpolation=cv2.INTER_LANCZOS4)
     ])
 
     # Transform preparing the data to be processed by the model
     model_transform = transforms.Compose([
-        wheeltr.SquarePaddedResize(size=224, interpolation=Image.LANCZOS),
         transforms.ToTensor(),
         transforms.Normalize(mean=normalize_mean, std=normalize_std)
     ])
 
     # Transform unnormalizing the data to be displayed by TensorBoard
-    sample_transform = wheeltr.InvNormalize(mean=normalize_mean, std=normalize_std)
+    sample_transform = wheeltr_torch.InvNormalize(mean=normalize_mean, std=normalize_std)
 
     return TransformsBundle(
         store=store_transform,
-        aug=aug_transform,
+        train=train_transform,
+        eval=eval_transform,
         model=model_transform,
         sample=sample_transform)
 
@@ -157,14 +176,16 @@ def prepare_model_fit_bundle(dataset_config: Dict[str, str]) -> ModelFitBundle:
     train_indices, val_indices = indices[divider:], indices[:divider]
 
     # Bundles
-    train_dataset = AlbumentationsDataset(dataset, TRANSFORMS_BUNDLE.aug)
+    train_dataset = AlbumentationsDataset(dataset, TRANSFORMS_BUNDLE.train)
     train_dataset = TransformDataset(train_dataset, TRANSFORMS_BUNDLE.model)
     train_bundle = prepare_train_bundle(train_dataset, list(train_indices))
 
-    val_dataset = TransformDataset(dataset, TRANSFORMS_BUNDLE.model)
+    val_dataset = AlbumentationsDataset(dataset, TRANSFORMS_BUNDLE.eval)
+    val_dataset = TransformDataset(val_dataset, TRANSFORMS_BUNDLE.model)
     val_bundle = prepare_eval_bundle(val_dataset, list(val_indices), randomize=True)
 
-    ctrl_dataset = TransformDataset(dataset, TRANSFORMS_BUNDLE.model)
+    ctrl_dataset = AlbumentationsDataset(dataset, TRANSFORMS_BUNDLE.eval)
+    ctrl_dataset = TransformDataset(ctrl_dataset, TRANSFORMS_BUNDLE.model)
     ctrl_bundle = prepare_eval_bundle(ctrl_dataset, list(ctrl_indices), randomize=False)
 
     return ModelFitBundle(train=train_bundle, val=val_bundle, ctrl=ctrl_bundle)
@@ -248,7 +269,7 @@ def fit_model(data_bundle: ModelFitBundle,
 
     prepared_group_names, prepared_optimizer_params = prepare_optimizer_params()
     optimizer = optim.AdamW(prepared_optimizer_params)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=25)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=int(round(config.hparams['anneal_t0'])))
 
     # Training setup
     trial_tracker = tracker.new_trial(config.hparams)
