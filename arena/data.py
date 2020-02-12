@@ -37,13 +37,22 @@ def prepare_test_bundle(dataset: Dataset, batch_size: int = 256, num_workers: in
 
 
 def load_dataset(config: Dict[str, str], target_classes: List[str], store_transform: Optional[Transform] = None) -> Dataset:
-    df_images = pd.read_csv(filepath_or_buffer=config['dataframe'], sep=',', header=0)
+    df_metadata = pd.read_csv(filepath_or_buffer=config['metadata'], sep=',', header=0)
+    df_annotations = pd.read_csv(filepath_or_buffer=config['annotations'], sep=',', header=0)
+
+    categories_dict = {}
+    for row in df_annotations.itertuples():
+        categories_dict[row.path] = row.category
 
     classes_map = {cls: i for i, cls in enumerate(target_classes)}
-    df_images['target'] = df_images['name'].map(lambda x: classes_map[x])
-    df_images = df_images.drop(columns='name')
 
-    dataset = LMDBImageDataset.cached(df_images,
+    df_metadata['target'] = df_metadata['name'].map(lambda name: classes_map[name])
+    df_metadata['category'] = df_metadata['path'].map(lambda path: categories_dict[path])
+
+    df_metadata = df_metadata[df_metadata['category'] == 'normal']
+    df_metadata = df_metadata.drop(columns=['name', 'category'])
+
+    dataset = LMDBImageDataset.cached(df_metadata,
                                       image_dir=config['image_dir'],
                                       lmdb_path=config['lmdb_dir'],
                                       transform=store_transform)
