@@ -4,7 +4,10 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 DIR=$DIR/..
 
 IMAGE=xdralex/dl-dev:latest
-WORK=/home/apollo/package
+
+HOME=/home/apollo
+WORK=$HOME/package
+CACHE=$HOME/.cache
 
 if [[ "$1" == "--tensorboard" ]]
 then
@@ -21,7 +24,7 @@ PORT_BINDING="$PORT_BINDING -p $HOST_JUPYTER_PORT:$CONT_JUPYTER_PORT"
 pushd "$DIR" > /dev/null || exit
 
 docker run --cap-add SYS_PTRACE --gpus all --shm-size=8192m --rm -u apollo -w $WORK $PORT_BINDING \
-        -v "$PWD:$WORK" -v "/data/ssd:/data/ssd" -v "/data/nvme:/data/nvme" "$IMAGE" \
+        -v "/data/assets/.cache:$CACHE" -v "$PWD:$WORK" -v "/data/ssd:/data/ssd" -v "/data/nvme:/data/nvme" "$IMAGE" \
         jupyter-notebook \
         --NotebookApp.notebook_dir=$WORK \
         --NotebookApp.ip=0.0.0.0 --NotebookApp.port=$CONT_JUPYTER_PORT \
