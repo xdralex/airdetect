@@ -5,6 +5,7 @@ tracker:
     root: /data/ssd/run/airliners/tensorboard
     track_weights: 1
     track_samples: 1
+    track_predictions: 1
 
 
 datasets:

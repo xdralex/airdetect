@@ -43,11 +43,12 @@ def cli_trial(experiment: str, device_name: str, repo: str, tag: str, network: s
     launch_tensorboard(tracker.tensorboard_dir)
 
     hparams = {
-        'lrA': 0.0003,
-        'lrB': 0.0003,
-        'wdA': 0.5,
-        'wdB': 0.5,
-        'anneal_t0': 30
+        'lrA': 0.000230778,
+        'lrB': 0.000294672,
+        'wdA': 0.979415,
+        'wdB': 0.202446,
+        'anneal_t0': 10,
+        'anneal_t_mult': 2
     }
 
     data_bundle = prepare_model_fit_bundle(config['datasets'][f'train'])

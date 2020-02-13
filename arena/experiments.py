@@ -15,6 +15,7 @@ from torchvision import transforms
 from wheel5.dataset import TransformDataset, AlbumentationsDataset
 from wheel5.model import fit
 from wheel5.tracking import Tracker
+from wheel5.scheduler import WarmupScheduler
 
 from data import DataBundle, load_dataset, prepare_train_bundle, prepare_eval_bundle, prepare_test_bundle, Transform
 
@@ -271,18 +272,22 @@ def fit_model(data_bundle: ModelFitBundle,
 
     prepared_group_names, prepared_optimizer_params = prepare_optimizer_params()
     optimizer = optim.AdamW(prepared_optimizer_params)
-    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=int(round(config.hparams['anneal_t0'])))
+    main_scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer,
+                                                                    T_0=int(round(config.hparams['anneal_t0'])),
+                                                                    T_mult=int(round(config.hparams['anneal_t_mult'])))
+    warmup_scheduler = WarmupScheduler(optimizer, epochs=3, next_scheduler=main_scheduler)
 
     # Training setup
     trial_tracker = tracker.new_trial(config.hparams)
     fit(device,
         model,
+        TARGET_CLASSES,
         data_bundle.train.loader,
         data_bundle.val.loader,
         data_bundle.ctrl.loader,
         loss,
         optimizer,
-        scheduler,
+        warmup_scheduler,
         group_names=prepared_group_names,
         num_epochs=config.max_epochs,
         tracker=trial_tracker,
