@@ -43,11 +43,11 @@ def cli_trial(experiment: str, device_name: str, repo: str, tag: str, network: s
     launch_tensorboard(tracker.tensorboard_dir)
 
     hparams = {
-        'lrA': 0.000280076,
-        'lrB': 0.000272109,
-        'wdA': 4.0,
-        'wdB': 4.0,
-        'anneal_t0': 60
+        'lrA': 0.0003,
+        'lrB': 0.0003,
+        'wdA': 0.5,
+        'wdB': 0.5,
+        'anneal_t0': 30
     }
 
     data_bundle = prepare_model_fit_bundle(config['datasets'][f'train'])
@@ -76,10 +76,11 @@ def cli_trial(experiment: str, device_name: str, repo: str, tag: str, network: s
 @click.option('-r', '--repo', 'repo', default='pytorch/vision', help='repository (e.g. pytorch/vision)', type=str)
 @click.option('-t', '--tag', 'tag', default='v0.4.2', help='tag (e.g. v0.4.2)', type=str)
 @click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
+@click.option('--space', 'space', required=True, help='search space name', type=str)
 @click.option('--trials', 'trials', required=True, help='number of trials to perform', type=int)
 @click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
 @click.option('--freeze', 'freeze', default=-1, help='freeze first K layers (set to negative or zero to disable)', type=int)
-def cli_search(experiment: str, device_name: str, repo: str, tag: str, network: str, trials: int, max_epochs: int, freeze: int):
+def cli_search(experiment: str, device_name: str, repo: str, tag: str, network: str, space: str, trials: int, max_epochs: int, freeze: int):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
@@ -110,24 +111,24 @@ def cli_search(experiment: str, device_name: str, repo: str, tag: str, network: 
 
         return results['hp/best_val_loss']
 
-    space = {
+    space_dict = {
         'resnet50_narrow': {
             'lrA': hp.uniform('lrA', 2e-4, 4e-4),
-            'wdA': hp.uniform('wdA', 5e-1, 1.5),
+            'wdA': hp.uniform('wdA', 1e-1, 1.0),
             'lrB': hp.uniform('lrB', 2e-4, 4e-4),
-            'wdB': hp.uniform('wdB', 5e-1, 1.5),
+            'wdB': hp.uniform('wdB', 1e-1, 1.0),
             'anneal_t0': hp.uniform('anneal_t0', 20, 40)
         },
-        'resnet50_narrow2': {
-            'lrA': hp.uniform('lrA', 2e-4, 5e-4),
-            'wdA': hp.uniform('wdA', 5e-1, 3),
-            'lrB': hp.uniform('lrB', 2e-4, 5e-4),
-            'wdB': hp.uniform('wdB', 5e-1, 3),
+        'resnet50_wide': {
+            'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-2)),
+            'wdA': hp.loguniform('wdA', math.log(1e-2), math.log(1e+1)),
+            'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-2)),
+            'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1e+1)),
             'anneal_t0': hp.uniform('anneal_t0', 20, 40)
         }
     }
 
-    fmin(fit_model_trial, space=space['resnet50_narrow'], algo=hyperopt.rand.suggest, max_evals=trials)
+    fmin(fit_model_trial, space=space_dict[space], algo=hyperopt.rand.suggest, max_evals=trials)
 
     input("\nSearch completed, press Enter to exit (this will terminate TensorBoard)\n")
 

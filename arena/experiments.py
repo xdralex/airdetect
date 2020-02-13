@@ -157,7 +157,9 @@ VAL_SPLIT = 0.2
 
 def prepare_model_test_bundle(dataset_config: Dict[str, str]) -> DataBundle:
     dataset = load_dataset(dataset_config, TARGET_CLASSES, TRANSFORMS_BUNDLE.store)
-    bundle = prepare_test_bundle(TransformDataset(dataset, TRANSFORMS_BUNDLE.model))
+    dataset = AlbumentationsDataset(dataset, TRANSFORMS_BUNDLE.eval)
+    dataset = TransformDataset(dataset, TRANSFORMS_BUNDLE.model)
+    bundle = prepare_test_bundle(dataset)
     return bundle
 
 
