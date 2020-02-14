@@ -66,16 +66,33 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
             'wdA': hp.uniform('wdA', 1e-1, 1.0),
             'lrB': hp.uniform('lrB', 2e-4, 4e-4),
             'wdB': hp.uniform('wdB', 1e-1, 1.0),
-            'anneal_t0': hp.uniform('anneal_t0', 9.999, 10.001),
-            'anneal_t_mult': hp.uniform('anneal_t_mult', 1.999, 2.001)
+            'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
+            'cos_f': hp.uniform('cos_f', 1.999, 2.001)
         },
         'resnet50_wide': {
             'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-2)),
             'wdA': hp.loguniform('wdA', math.log(1e-2), math.log(1e+1)),
             'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-2)),
             'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1e+1)),
-            'anneal_t0': hp.uniform('anneal_t0', 10, 20),
-            'anneal_t_mult': hp.uniform('anneal_t_mult', 1, 2)
+            'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
+            'cos_f': hp.uniform('cos_f', 1.999, 2.001)
+        },
+
+        'resnet101_narrow': {
+            'lrA': hp.uniform('lrA', 1e-4, 4e-4),
+            'wdA': hp.uniform('wdA', 1e-1, 1.0),
+            'lrB': hp.uniform('lrB', 1e-4, 4e-4),
+            'wdB': hp.uniform('wdB', 1e-1, 1.0),
+            'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
+            'cos_f': hp.uniform('cos_f', 1.999, 2.001)
+        },
+        'resnet101_wide': {
+            'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-3)),
+            'wdA': hp.loguniform('wdA', math.log(1e-2), math.log(1e+1)),
+            'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-3)),
+            'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1e+1)),
+            'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
+            'cos_f': hp.uniform('cos_f', 1.999, 2.001)
         },
 
         'se_resnet50_narrow': {
@@ -83,16 +100,16 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
             'wdA': hp.uniform('wdA', 1e-1, 1.0),
             'lrB': hp.uniform('lrB', 2e-4, 4e-4),
             'wdB': hp.uniform('wdB', 1e-1, 1.0),
-            'anneal_t0': hp.uniform('anneal_t0', 9.999, 10.001),
-            'anneal_t_mult': hp.uniform('anneal_t_mult', 1.999, 2.001)
+            'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
+            'cos_f': hp.uniform('cos_f', 1.999, 2.001)
         },
         'se_resnet50_wide': {
             'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-2)),
             'wdA': hp.loguniform('wdA', math.log(1e-2), math.log(1e+1)),
             'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-2)),
             'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1e+1)),
-            'anneal_t0': hp.uniform('anneal_t0', 10, 20),
-            'anneal_t_mult': hp.uniform('anneal_t_mult', 1, 2)
+            'cos_t0': hp.uniform('cos_t0', 10, 20),
+            'cos_f': hp.uniform('cos_f', 1, 2)
         }
     }
 
@@ -122,7 +139,7 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
     launch_tensorboard(tracker.tensorboard_dir)
 
     hparams = {
-        'lrA': 0.0003,
+        'lrA': 0.0002,
         'lrB': 0.0003,
         'wdA': 1.0,
         'wdB': 1.0,

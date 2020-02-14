@@ -209,7 +209,7 @@ def fit_model(data_bundle: ModelFitBundle,
     old_fc = model.fc
     model.fc = nn.Linear(in_features=old_fc.in_features, out_features=len(TARGET_CLASSES))
 
-    target_probs = target_distribution(data_bundle.train.loader, classes=len(TARGET_CLASSES))
+    target_probs = target_distribution(data_bundle.train.loader, classes=len(TARGET_CLASSES), display_progress=display_progress)
     init_softmax_logits(model.fc.bias, target_probs)
 
     model.type(torch.cuda.FloatTensor)
@@ -279,8 +279,8 @@ def fit_model(data_bundle: ModelFitBundle,
     prepared_group_names, prepared_optimizer_params = prepare_optimizer_params()
     optimizer = optim.AdamW(prepared_optimizer_params)
     main_scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer,
-                                                                    T_0=int(round(config.hparams['anneal_t0'])),
-                                                                    T_mult=int(round(config.hparams['anneal_t_mult'])))
+                                                                    T_0=int(round(config.hparams['cos_t0'])),
+                                                                    T_mult=int(round(config.hparams['cos_f'])))
     warmup_scheduler = WarmupScheduler(optimizer, epochs=3, next_scheduler=main_scheduler)
 
     # Training setup
