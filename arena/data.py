@@ -14,7 +14,7 @@ class DataBundle(NamedTuple):
     indices: List[int]
 
 
-def prepare_train_bundle(dataset: Dataset, indices: List[int], batch_size: int = 64, num_workers: int = 4) -> DataBundle:
+def prepare_train_bundle(dataset: Dataset, indices: List[int], batch_size: int = 32, num_workers: int = 4) -> DataBundle:
     sampler = SubsetRandomSampler(indices)
     loader = DataLoader(dataset, batch_size=batch_size, sampler=sampler, num_workers=num_workers, pin_memory=True)
 

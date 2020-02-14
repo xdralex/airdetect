@@ -1,3 +1,4 @@
+import math
 from typing import Dict, Union, NamedTuple, Tuple, List, Optional
 
 import albumentations as albu
@@ -11,11 +12,14 @@ from numpy.random.mtrand import RandomState
 from torch import nn
 from torch import optim
 from torch.nn import Parameter
+from torch.utils.data import DataLoader
 from torchvision import transforms
+from tqdm import tqdm
 from wheel5.dataset import TransformDataset, AlbumentationsDataset
 from wheel5.model import fit
 from wheel5.tracking import Tracker
 from wheel5.scheduler import WarmupScheduler
+from wheel5.nn import init_softmax_logits
 
 from data import DataBundle, load_dataset, prepare_train_bundle, prepare_eval_bundle, prepare_test_bundle, Transform
 
@@ -30,7 +34,6 @@ class TransformsBundle(NamedTuple):
 
 class ExperimentConfig(NamedTuple):
     repo: str
-    tag: str
     network: str
     hparams: Dict[str, float]
     max_epochs: int
@@ -201,10 +204,13 @@ def fit_model(data_bundle: ModelFitBundle,
               debug: bool,
               display_progress: bool) -> Dict[str, float]:
     # Model preparation
-    model = torch.hub.load(f'{config.repo}:{config.tag}', config.network, pretrained=True, verbose=False)
+    model = torch.hub.load(config.repo, config.network, pretrained=True, verbose=False)
 
     old_fc = model.fc
     model.fc = nn.Linear(in_features=old_fc.in_features, out_features=len(TARGET_CLASSES))
+
+    target_probs = target_distribution(data_bundle.train.loader, classes=len(TARGET_CLASSES))
+    init_softmax_logits(model.fc.bias, target_probs)
 
     model.type(torch.cuda.FloatTensor)
     model.to(device)
@@ -310,3 +316,22 @@ def fit_model(data_bundle: ModelFitBundle,
     trial_tracker.trial_completed(results)
 
     return results
+
+
+def target_distribution(loader: DataLoader, classes: int, display_progress: bool = True) -> torch.Tensor:
+    batches_count = math.ceil(len(loader.sampler) / loader.batch_size)
+
+    with torch.no_grad():
+        counts = torch.zeros(classes)
+        with tqdm(total=batches_count, disable=not display_progress) as progress_bar:
+            for _, y, _ in loader:
+                counts.index_add_(0, y, torch.ones(y.shape[0]))
+                progress_bar.update()
+
+            total = float(counts.sum())
+            probs = torch.div(counts, total)
+
+        if display_progress:
+            print('classes = [' + ', '.join([f'{x:.3f}' for x in probs.numpy().tolist()]) + ']')
+
+        return probs

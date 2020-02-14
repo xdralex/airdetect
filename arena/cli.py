@@ -21,67 +21,16 @@ from experiments import ExperimentConfig, fit_model, prepare_model_test_bundle, 
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
 
 
-@click.command(name='trial')
-@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
-@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
-@click.option('-r', '--repo', 'repo', default='pytorch/vision', help='repository (e.g. pytorch/vision)', type=str)
-@click.option('-t', '--tag', 'tag', default='v0.4.2', help='tag (e.g. v0.4.2)', type=str)
-@click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
-@click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
-@click.option('--freeze', 'freeze', default=-1, help='freeze first K layers', type=int)
-def cli_trial(experiment: str, device_name: str, repo: str, tag: str, network: str, max_epochs: int, freeze: int):
-    with open('config.yaml', 'r') as config_file:
-        config = yaml.load(config_file, Loader=yaml.Loader)
-        logutils.configure_logging(config['logging'])
-
-    device = torch.device(device_name)
-
-    snapshot_cfg = snapshot_config(config)
-    tensorboard_cfg = tensorboard_config(config)
-
-    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=TRANSFORMS_BUNDLE.sample)
-    launch_tensorboard(tracker.tensorboard_dir)
-
-    hparams = {
-        'lrA': 0.000230778,
-        'lrB': 0.000294672,
-        'wdA': 0.979415,
-        'wdB': 0.202446,
-        'anneal_t0': 10,
-        'anneal_t_mult': 2
-    }
-
-    data_bundle = prepare_model_fit_bundle(config['datasets'][f'train'])
-    experiment_config = ExperimentConfig(repo=repo,
-                                         tag=tag,
-                                         network=network,
-                                         hparams=hparams,
-                                         max_epochs=max_epochs,
-                                         freeze=freeze)
-
-    results = fit_model(data_bundle=data_bundle,
-                        config=experiment_config,
-                        device=device,
-                        tracker=tracker,
-                        debug=True,
-                        display_progress=True)
-
-    print(json.dumps(results, indent=4))
-
-    input("\nTrial completed, press Enter to exit (this will terminate TensorBoard)\n")
-
-
 @click.command(name='search')
 @click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
 @click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
-@click.option('-r', '--repo', 'repo', default='pytorch/vision', help='repository (e.g. pytorch/vision)', type=str)
-@click.option('-t', '--tag', 'tag', default='v0.4.2', help='tag (e.g. v0.4.2)', type=str)
+@click.option('-r', '--repo', 'repo', default='pytorch/vision:v0.4.2', help='repository (e.g. pytorch/vision:v0.4.2)', type=str)
 @click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
 @click.option('--space', 'space', required=True, help='search space name', type=str)
 @click.option('--trials', 'trials', required=True, help='number of trials to perform', type=int)
 @click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
 @click.option('--freeze', 'freeze', default=-1, help='freeze first K layers (set to negative or zero to disable)', type=int)
-def cli_search(experiment: str, device_name: str, repo: str, tag: str, network: str, space: str, trials: int, max_epochs: int, freeze: int):
+def cli_search(experiment: str, device_name: str, repo: str, network: str, space: str, trials: int, max_epochs: int, freeze: int):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
@@ -97,7 +46,6 @@ def cli_search(experiment: str, device_name: str, repo: str, tag: str, network: 
     def fit_model_trial(hparams: Dict[str, float]):
         data_bundle = prepare_model_fit_bundle(config['datasets'][f'train'])
         experiment_config = ExperimentConfig(repo=repo,
-                                             tag=tag,
                                              network=network,
                                              hparams=hparams,
                                              max_epochs=max_epochs,
@@ -118,14 +66,33 @@ def cli_search(experiment: str, device_name: str, repo: str, tag: str, network: 
             'wdA': hp.uniform('wdA', 1e-1, 1.0),
             'lrB': hp.uniform('lrB', 2e-4, 4e-4),
             'wdB': hp.uniform('wdB', 1e-1, 1.0),
-            'anneal_t0': hp.uniform('anneal_t0', 20, 40)
+            'anneal_t0': hp.uniform('anneal_t0', 9.999, 10.001),
+            'anneal_t_mult': hp.uniform('anneal_t_mult', 1.999, 2.001)
         },
         'resnet50_wide': {
             'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-2)),
             'wdA': hp.loguniform('wdA', math.log(1e-2), math.log(1e+1)),
             'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-2)),
             'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1e+1)),
-            'anneal_t0': hp.uniform('anneal_t0', 20, 40)
+            'anneal_t0': hp.uniform('anneal_t0', 10, 20),
+            'anneal_t_mult': hp.uniform('anneal_t_mult', 1, 2)
+        },
+
+        'se_resnet50_narrow': {
+            'lrA': hp.uniform('lrA', 2e-4, 4e-4),
+            'wdA': hp.uniform('wdA', 1e-1, 1.0),
+            'lrB': hp.uniform('lrB', 2e-4, 4e-4),
+            'wdB': hp.uniform('wdB', 1e-1, 1.0),
+            'anneal_t0': hp.uniform('anneal_t0', 9.999, 10.001),
+            'anneal_t_mult': hp.uniform('anneal_t_mult', 1.999, 2.001)
+        },
+        'se_resnet50_wide': {
+            'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-2)),
+            'wdA': hp.loguniform('wdA', math.log(1e-2), math.log(1e+1)),
+            'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-2)),
+            'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1e+1)),
+            'anneal_t0': hp.uniform('anneal_t0', 10, 20),
+            'anneal_t_mult': hp.uniform('anneal_t_mult', 1, 2)
         }
     }
 
@@ -134,13 +101,60 @@ def cli_search(experiment: str, device_name: str, repo: str, tag: str, network: 
     input("\nSearch completed, press Enter to exit (this will terminate TensorBoard)\n")
 
 
+@click.command(name='trial')
+@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
+@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
+@click.option('-r', '--repo', 'repo', default='pytorch/vision:v0.4.2', help='repository (e.g. pytorch/vision:v0.4.2)', type=str)
+@click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
+@click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
+@click.option('--freeze', 'freeze', default=-1, help='freeze first K layers', type=int)
+def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_epochs: int, freeze: int):
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
+
+    device = torch.device(device_name)
+
+    snapshot_cfg = snapshot_config(config)
+    tensorboard_cfg = tensorboard_config(config)
+
+    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=TRANSFORMS_BUNDLE.sample)
+    launch_tensorboard(tracker.tensorboard_dir)
+
+    hparams = {
+        'lrA': 0.0003,
+        'lrB': 0.0003,
+        'wdA': 1.0,
+        'wdB': 1.0,
+        'anneal_t0': 10,
+        'anneal_t_mult': 2
+    }
+
+    data_bundle = prepare_model_fit_bundle(config['datasets'][f'train'])
+    experiment_config = ExperimentConfig(repo=repo,
+                                         network=network,
+                                         hparams=hparams,
+                                         max_epochs=max_epochs,
+                                         freeze=freeze)
+
+    results = fit_model(data_bundle=data_bundle,
+                        config=experiment_config,
+                        device=device,
+                        tracker=tracker,
+                        debug=True,
+                        display_progress=True)
+
+    print(json.dumps(results, indent=4))
+
+    input("\nTrial completed, press Enter to exit (this will terminate TensorBoard)\n")
+
+
 @click.command(name='introspect-nn')
-@click.option('-r', '--repo', 'repo', default='pytorch/vision', help='repository (e.g. pytorch/vision)', type=str)
-@click.option('-t', '--tag', 'tag', default='v0.4.2', help='tag (e.g. v0.4.2)', type=str)
+@click.option('-r', '--repo', 'repo', default='pytorch/vision:v0.4.2', help='repository (e.g. pytorch/vision:v0.4.2)', type=str)
 @click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
 @click.option('-s', '--shape', 'shape', required=True, help='input shape N x a_1 x a_2 x ... x a_k (e.g. 4x3x224x224)', type=str)
 @click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
-def cli_introspect_nn(repo: str, tag: str, network: str, shape: str, device_name: str):
+def cli_introspect_nn(repo: str, network: str, shape: str, device_name: str):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         viz_nn_dir = config['viz']['nn_dir']
@@ -154,7 +168,7 @@ def cli_introspect_nn(repo: str, tag: str, network: str, shape: str, device_name
     if len(dims) <= 1:
         raise click.BadOptionUsage('shape', f'Invalid input shape: "{shape}": at least two dimensions (batch size and tensor size) must be provided')
 
-    model = torch.hub.load(f'{repo}:{tag}', network, pretrained=True, verbose=False)
+    model = torch.hub.load(repo, network, pretrained=True, verbose=False)
     device = torch.device(device_name)
     model = model.to(device)
 
@@ -189,7 +203,7 @@ def cli_introspect_nn(repo: str, tag: str, network: str, shape: str, device_name
     graph = introspect(model, input_size=dims)
     dot = make_dot(graph)
 
-    filename = f'{repo}-{tag}-{network}'
+    filename = f'{repo}-{network}'
     filename = re.sub(r'[^a-zA-Z0-9_.-]', '_', filename)
     dot.render(filename=filename, directory=viz_nn_dir, format='dot')
 
