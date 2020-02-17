@@ -20,6 +20,7 @@ from wheel5.model import fit
 from wheel5.tracking import Tracker
 from wheel5.scheduler import WarmupScheduler
 from wheel5.nn import init_softmax_logits
+from wheel5.loss import SmoothedCrossEntropyLoss
 
 from data import DataBundle, load_dataset, prepare_train_bundle, prepare_eval_bundle, prepare_test_bundle, Transform
 
@@ -100,6 +101,8 @@ def make_transforms_bundle():
 
     mean_color = tuple([int(round(c * 255)) for c in normalize_mean])
 
+    # TODO: INTER_AREA
+
     # Transform applied when the data is preprocessed into the store
     store_transform = transforms.Compose([
         wheeltr_torch.Rescale(scale=0.5, interpolation=Image.LANCZOS)
@@ -116,10 +119,10 @@ def make_transforms_bundle():
                               rotate_limit=20,
                               border_mode=cv2.BORDER_CONSTANT,
                               value=mean_color,
-                              interpolation=cv2.INTER_LANCZOS4,
+                              interpolation=cv2.INTER_AREA,
                               p=1.0),
 
-        wheeltr_albu.Resize(height=224, width=224, interpolation=cv2.INTER_LANCZOS4),
+        wheeltr_albu.Resize(height=224, width=224, interpolation=cv2.INTER_AREA),
         albu.MultiplicativeNoise(multiplier=(0.9, 1.1), p=1.0),
         albu.CoarseDropout(max_holes=12,
                            max_height=12,
@@ -133,7 +136,7 @@ def make_transforms_bundle():
 
     eval_transform = albu.Compose([
         wheeltr_albu.PadToSquare(fill=mean_color),
-        wheeltr_albu.Resize(height=224, width=224, interpolation=cv2.INTER_LANCZOS4)
+        wheeltr_albu.Resize(height=224, width=224, interpolation=cv2.INTER_AREA)
     ])
 
     # Transform preparing the data to be processed by the model
@@ -215,7 +218,8 @@ def fit_model(data_bundle: ModelFitBundle,
     model.type(torch.cuda.FloatTensor)
     model.to(device)
 
-    loss = nn.CrossEntropyLoss()
+    smooth_dist = torch.full([len(TARGET_CLASSES)], fill_value=1.0 / len(TARGET_CLASSES)).to(device)
+    loss = SmoothedCrossEntropyLoss(smooth_factor=config.hparams['smooth'], smooth_dist=smooth_dist)
 
     param_groups = {
         'A': ParamGroup({'lr': config.hparams['lrA'], 'weight_decay': config.hparams['wdA']}),

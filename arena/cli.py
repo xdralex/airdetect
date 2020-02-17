@@ -63,19 +63,21 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
     space_dict = {
         'resnet50_narrow': {
             'lrA': hp.uniform('lrA', 2e-4, 4e-4),
-            'wdA': hp.uniform('wdA', 1e-1, 1.0),
+            'wdA': hp.loguniform('wdA', math.log(1e-2), math.log(1)),
             'lrB': hp.uniform('lrB', 2e-4, 4e-4),
-            'wdB': hp.uniform('wdB', 1e-1, 1.0),
+            'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1)),
             'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
-            'cos_f': hp.uniform('cos_f', 1.999, 2.001)
+            'cos_f': hp.uniform('cos_f', 1.999, 2.001),
+            'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1))
         },
         'resnet50_wide': {
             'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-2)),
-            'wdA': hp.loguniform('wdA', math.log(1e-2), math.log(1e+1)),
+            'wdA': hp.loguniform('wdA', math.log(1e-3), math.log(1e+1)),
             'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-2)),
-            'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1e+1)),
+            'wdB': hp.loguniform('wdB', math.log(1e-3), math.log(1e+1)),
             'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
-            'cos_f': hp.uniform('cos_f', 1.999, 2.001)
+            'cos_f': hp.uniform('cos_f', 1.999, 2.001),
+            'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1))
         },
 
         'resnet101_narrow': {
@@ -84,7 +86,8 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
             'lrB': hp.uniform('lrB', 1e-4, 4e-4),
             'wdB': hp.uniform('wdB', 1e-1, 1.0),
             'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
-            'cos_f': hp.uniform('cos_f', 1.999, 2.001)
+            'cos_f': hp.uniform('cos_f', 1.999, 2.001),
+            'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1))
         },
         'resnet101_wide': {
             'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-3)),
@@ -92,7 +95,8 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
             'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-3)),
             'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1e+1)),
             'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
-            'cos_f': hp.uniform('cos_f', 1.999, 2.001)
+            'cos_f': hp.uniform('cos_f', 1.999, 2.001),
+            'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1))
         },
 
         'se_resnet50_narrow': {
@@ -101,7 +105,8 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
             'lrB': hp.uniform('lrB', 2e-4, 4e-4),
             'wdB': hp.uniform('wdB', 1e-1, 1.0),
             'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
-            'cos_f': hp.uniform('cos_f', 1.999, 2.001)
+            'cos_f': hp.uniform('cos_f', 1.999, 2.001),
+            'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1))
         },
         'se_resnet50_wide': {
             'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-2)),
@@ -109,7 +114,8 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
             'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-2)),
             'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1e+1)),
             'cos_t0': hp.uniform('cos_t0', 10, 20),
-            'cos_f': hp.uniform('cos_f', 1, 2)
+            'cos_f': hp.uniform('cos_f', 1, 2),
+            'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1))
         }
     }
 
@@ -143,8 +149,9 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
         'lrB': 0.0003,
         'wdA': 1.0,
         'wdB': 1.0,
-        'anneal_t0': 10,
-        'anneal_t_mult': 2
+        'cos_t0': 10,
+        'cos_f': 2,
+        'smooth': 0.05
     }
 
     data_bundle = prepare_model_fit_bundle(config['datasets'][f'train'])
