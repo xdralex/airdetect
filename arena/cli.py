@@ -16,6 +16,7 @@ from wheel5 import logutils
 from wheel5.introspection import introspect, make_dot
 from wheel5.model import score_blend
 from wheel5.tracking import Tracker, Snapshotter, TrialTracker
+from wheel5.dataretriever import DataRetriever, DirectDataRetriever
 
 from experiments import ExperimentConfig, fit_model, prepare_model_test_bundle, prepare_model_fit_bundle, TRANSFORMS_BUNDLE
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
@@ -173,6 +174,56 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
     input("\nTrial completed, press Enter to exit (this will terminate TensorBoard)\n")
 
 
+@click.command(name='eval-top-blend')
+@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
+@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
+@click.option('--kind', 'kind', required=True, type=click.Choice(['final', 'best']), help='use final/best models')
+@click.option('--top', 'top', default=1, help='number of best models to use', type=int)
+@click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
+@click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
+@click.option('--test', 'test', default='public', type=click.Choice(['public', 'private']), help='public/private test dataset')
+@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
+def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, metric_name: str, order: str, test: str, hide: str):
+    def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
+        return df.sort_values(by=metric_name, ascending=(order == 'asc'))
+
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+
+    device = torch.device(device_name)
+
+    snapshot_cfg = snapshot_config(config)
+    df_res = Tracker.load_trial_stats(snapshot_cfg, experiment)
+    df_res = df_res[df_res['snapshot'] != '']
+
+    if kind == 'final':
+        df_model = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
+    elif kind == 'best':
+        df_model = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
+    else:
+        raise click.BadOptionUsage('kind', f'Unsupported kind option: "{kind}"')
+
+    test_bundle = prepare_model_test_bundle(config['datasets'][f'{test}_test'])
+
+    df_top_models = df_model.head(top)
+    drop_cols = [col.strip() for col in hide.split(',')]
+    print(f'Averaging top models: \n\n{dump(df_top_models, drop_cols=drop_cols)}\n\n\n')
+
+    models = []
+    loss = None
+    for row in df_top_models.head(top).itertuples():
+        snapshot = Snapshotter.load_snapshot(row.directory, row.snapshot)
+        model = snapshot.model.cpu()
+
+        models.append(model)
+        loss = snapshot.loss
+
+        del snapshot
+
+    print(f'Evaluating model performance on the >>{test}<< test dataset:\n')
+    print(score_blend(device, models, DirectDataRetriever(test_bundle.loader), loss))
+
+
 @click.command(name='introspect-nn')
 @click.option('-r', '--repo', 'repo', default='pytorch/vision:v0.4.2', help='repository (e.g. pytorch/vision:v0.4.2)', type=str)
 @click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
@@ -232,56 +283,6 @@ def cli_introspect_nn(repo: str, network: str, shape: str, device_name: str):
     dot.render(filename=filename, directory=viz_nn_dir, format='dot')
 
     print(f'Dot file saved to: {os.path.join(viz_nn_dir, filename)}.dot')
-
-
-@click.command(name='eval-top-blend')
-@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
-@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
-@click.option('--kind', 'kind', required=True, type=click.Choice(['final', 'best']), help='use final/best models')
-@click.option('--top', 'top', default=1, help='number of best models to use', type=int)
-@click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
-@click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
-@click.option('--test', 'test', default='public', type=click.Choice(['public', 'private']), help='public/private test dataset')
-@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
-def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, metric_name: str, order: str, test: str, hide: str):
-    def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
-        return df.sort_values(by=metric_name, ascending=(order == 'asc'))
-
-    with open('config.yaml', 'r') as config_file:
-        config = yaml.load(config_file, Loader=yaml.Loader)
-
-    device = torch.device(device_name)
-
-    snapshot_cfg = snapshot_config(config)
-    df_res = Tracker.load_trial_stats(snapshot_cfg, experiment)
-    df_res = df_res[df_res['snapshot'] != '']
-
-    if kind == 'final':
-        df_model = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
-    elif kind == 'best':
-        df_model = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
-    else:
-        raise click.BadOptionUsage('kind', f'Unsupported kind option: "{kind}"')
-
-    test_bundle = prepare_model_test_bundle(config['datasets'][f'{test}_test'])
-
-    df_top_models = df_model.head(top)
-    drop_cols = [col.strip() for col in hide.split(',')]
-    print(f'Averaging top models: \n\n{dump(df_top_models, drop_cols=drop_cols)}\n\n\n')
-
-    models = []
-    loss = None
-    for row in df_top_models.head(top).itertuples():
-        snapshot = Snapshotter.load_snapshot(row.directory, row.snapshot)
-        model = snapshot.model.cpu()
-
-        models.append(model)
-        loss = snapshot.loss
-
-        del snapshot
-
-    print(f'Evaluating model performance on the >>{test}<< test dataset:\n')
-    print(score_blend(device, models, test_bundle.loader, loss))
 
 
 @click.command(name='list-top-trials')
@@ -375,10 +376,10 @@ def cli():
 if __name__ == "__main__":
     cli.add_command(cli_trial)
     cli.add_command(cli_search)
+    cli.add_command(cli_eval_top_blend)
 
     cli.add_command(cli_introspect_nn)
 
-    cli.add_command(cli_eval_top_blend)
     cli.add_command(cli_list_top_trials)
     cli.add_command(cli_list_all_trials)
     cli.add_command(cli_list_trial)

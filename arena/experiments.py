@@ -218,7 +218,7 @@ def fit_model(data_bundle: ModelFitBundle,
     model.type(torch.cuda.FloatTensor)
     model.to(device)
 
-    smooth_dist = torch.full([len(TARGET_CLASSES)], fill_value=1.0 / len(TARGET_CLASSES)).to(device)
+    smooth_dist = torch.full([len(TARGET_CLASSES)], fill_value=1.0 / len(TARGET_CLASSES))
     loss = SmoothedCrossEntropyLoss(smooth_factor=config.hparams['smooth'], smooth_dist=smooth_dist)
 
     param_groups = {
