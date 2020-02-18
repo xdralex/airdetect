@@ -14,11 +14,9 @@ from torch import nn
 from torchsummary import summary
 from wheel5 import logutils
 from wheel5.introspection import introspect, make_dot
-from wheel5.model import score_blend
-from wheel5.tracking import Tracker, Snapshotter, TrialTracker
-from wheel5.dataretriever import DataRetriever, DirectDataRetriever
+from wheel5.tracking import Tracker, TrialTracker
 
-from experiments import ExperimentConfig, fit_model, prepare_model_test_bundle, prepare_model_fit_bundle, TRANSFORMS_BUNDLE
+from experiments import ExperimentConfig, fit_model, score_model_blend, TRANSFORMS_BUNDLE
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
 
 
@@ -31,7 +29,8 @@ from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
 @click.option('--trials', 'trials', required=True, help='number of trials to perform', type=int)
 @click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
 @click.option('--freeze', 'freeze', default=-1, help='freeze first K layers (set to negative or zero to disable)', type=int)
-def cli_search(experiment: str, device_name: str, repo: str, network: str, space: str, trials: int, max_epochs: int, freeze: int):
+@click.option('--mixup', 'mixup', is_flag=True, help='apply mixup augmentation', type=bool)
+def cli_search(experiment: str, device_name: str, repo: str, network: str, space: str, trials: int, max_epochs: int, freeze: int, mixup: bool):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
@@ -45,15 +44,15 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
     launch_tensorboard(tracker.tensorboard_dir)
 
     def fit_model_trial(hparams: Dict[str, float]):
-        data_bundle = prepare_model_fit_bundle(config['datasets'][f'train'])
         experiment_config = ExperimentConfig(repo=repo,
                                              network=network,
                                              hparams=hparams,
                                              max_epochs=max_epochs,
-                                             freeze=freeze)
+                                             freeze=freeze,
+                                             mixup=mixup)
 
-        results = fit_model(data_bundle=data_bundle,
-                            config=experiment_config,
+        results = fit_model(dataset_config=config['datasets']['train'],
+                            experiment_config=experiment_config,
                             device=device,
                             tracker=tracker,
                             debug=False,
@@ -132,7 +131,8 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
 @click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
 @click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
 @click.option('--freeze', 'freeze', default=-1, help='freeze first K layers', type=int)
-def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_epochs: int, freeze: int):
+@click.option('--mixup', 'mixup', is_flag=True, help='apply mixup augmentation', type=bool)
+def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_epochs: int, freeze: int, mixup: bool):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
@@ -146,24 +146,25 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
     launch_tensorboard(tracker.tensorboard_dir)
 
     hparams = {
-        'lrA': 0.0002,
-        'lrB': 0.0003,
-        'wdA': 1.0,
-        'wdB': 1.0,
+        'lrA': 0.000274734,
+        'lrB': 0.000320471,
+        'wdA': 0.143165,
+        'wdB': 0.239107,
         'cos_t0': 10,
         'cos_f': 2,
-        'smooth': 0.05
+        'smooth': 0.0,
+        'alpha': 0.2
     }
 
-    data_bundle = prepare_model_fit_bundle(config['datasets'][f'train'])
     experiment_config = ExperimentConfig(repo=repo,
                                          network=network,
                                          hparams=hparams,
                                          max_epochs=max_epochs,
-                                         freeze=freeze)
+                                         freeze=freeze,
+                                         mixup=mixup)
 
-    results = fit_model(data_bundle=data_bundle,
-                        config=experiment_config,
+    results = fit_model(dataset_config=config['datasets']['train'],
+                        experiment_config=experiment_config,
                         device=device,
                         tracker=tracker,
                         debug=True,
@@ -182,46 +183,39 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
 @click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
 @click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
 @click.option('--test', 'test', default='public', type=click.Choice(['public', 'private']), help='public/private test dataset')
-@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
+@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc,snapshot', type=str, help='columns to hide')
 def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, metric_name: str, order: str, test: str, hide: str):
-    def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
-        return df.sort_values(by=metric_name, ascending=(order == 'asc'))
+    # def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
+    #     return df.sort_values(by=metric_name, ascending=(order == 'asc'))
+    #
+    # with open('config.yaml', 'r') as config_file:
+    #     config = yaml.load(config_file, Loader=yaml.Loader)
+    # 
+    # device = torch.device(device_name)
+    #
+    # snapshot_cfg = snapshot_config(config)
+    # df_res = Tracker.load_trial_stats(snapshot_cfg, experiment)
+    # df_res = df_res[df_res['snapshot'] != '']
+    #
+    # if kind == 'final':
+    #     df_model = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
+    # elif kind == 'best':
+    #     df_model = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
+    # else:
+    #     raise click.BadOptionUsage('kind', f'Unsupported kind option: "{kind}"')
+    #
+    # df_top_models = df_model.head(top)
+    # drop_cols = [col.strip() for col in hide.split(',')]
+    # print(f'Averaging top models: \n\n{dump(df_top_models, drop_cols=drop_cols)}\n\n\n')
+    #
+    # print(f'Evaluating model performance on the >>{test}<< test dataset:\n')
+    # paths = [(row.directory, row.snapshot) for row in df_top_models.head(top).itertuples()]
+    # results = score_model_blend(dataset_config=config['datasets'][f'{test}_test'],
+    #                             device=device,
+    #                             paths=paths)
+    # print(results)
 
-    with open('config.yaml', 'r') as config_file:
-        config = yaml.load(config_file, Loader=yaml.Loader)
-
-    device = torch.device(device_name)
-
-    snapshot_cfg = snapshot_config(config)
-    df_res = Tracker.load_trial_stats(snapshot_cfg, experiment)
-    df_res = df_res[df_res['snapshot'] != '']
-
-    if kind == 'final':
-        df_model = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
-    elif kind == 'best':
-        df_model = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
-    else:
-        raise click.BadOptionUsage('kind', f'Unsupported kind option: "{kind}"')
-
-    test_bundle = prepare_model_test_bundle(config['datasets'][f'{test}_test'])
-
-    df_top_models = df_model.head(top)
-    drop_cols = [col.strip() for col in hide.split(',')]
-    print(f'Averaging top models: \n\n{dump(df_top_models, drop_cols=drop_cols)}\n\n\n')
-
-    models = []
-    loss = None
-    for row in df_top_models.head(top).itertuples():
-        snapshot = Snapshotter.load_snapshot(row.directory, row.snapshot)
-        model = snapshot.model.cpu()
-
-        models.append(model)
-        loss = snapshot.loss
-
-        del snapshot
-
-    print(f'Evaluating model performance on the >>{test}<< test dataset:\n')
-    print(score_blend(device, models, DirectDataRetriever(test_bundle.loader), loss))
+    pass
 
 
 @click.command(name='introspect-nn')
@@ -291,7 +285,7 @@ def cli_introspect_nn(repo: str, network: str, shape: str, device_name: str):
 @click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
 @click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
 @click.option('--all/--snap', 'list_all', default=False, help='list all entries (default) / only entries with snapshots')
-@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
+@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc,snapshot', type=str, help='columns to hide')
 def cli_list_top_trials(experiment: str, top: int, metric_name: str, order: str, list_all: bool, hide: str):
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
         return df.sort_values(by=metric_name, ascending=(order == 'asc'))
@@ -319,7 +313,7 @@ def cli_list_top_trials(experiment: str, top: int, metric_name: str, order: str,
 @click.command(name='list-all-trials')
 @click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
 @click.option('--all/--snap', 'list_all', default=False, help='list all entries (default) / only entries with snapshots')
-@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
+@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc,snapshot', type=str, help='columns to hide')
 def cli_list_all_trials(experiment: str, list_all: bool, hide: str):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
@@ -340,7 +334,7 @@ def cli_list_all_trials(experiment: str, list_all: bool, hide: str):
 @click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
 @click.option('-t', '--trial', 'trial', required=True, type=str, help='trial name')
 @click.option('--all/--snap', 'list_all', default=True, help='list all entries (default) / only entries with snapshots')
-@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc', type=str, help='columns to hide')
+@click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc,snapshot', type=str, help='columns to hide')
 def cli_list_trial(experiment: str, trial: str, list_all: bool, hide: str):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)

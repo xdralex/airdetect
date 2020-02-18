@@ -5,24 +5,29 @@ import albumentations as albu
 import cv2
 import numpy as np
 import torch
-import wheel5.transforms_torchvision as wheeltr_torch
 import wheel5.transforms_albumentations as wheeltr_albu
+import wheel5.transforms_torchvision as wheeltr_torch
 from PIL import Image
 from numpy.random.mtrand import RandomState
 from torch import nn
 from torch import optim
-from torch.nn import Parameter
+from torch.nn import Parameter, CrossEntropyLoss
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
+from wheel5.dataretriever import DirectDataRetriever, MixupDataRetriever
 from wheel5.dataset import TransformDataset, AlbumentationsDataset
-from wheel5.model import fit
-from wheel5.tracking import Tracker
-from wheel5.scheduler import WarmupScheduler
-from wheel5.nn import init_softmax_logits
 from wheel5.loss import SmoothedCrossEntropyLoss
+from wheel5.model import fit
+from wheel5.model import score_blend
+from wheel5.nn import init_softmax_logits
+from wheel5.scheduler import WarmupScheduler
+from wheel5.tracking import Tracker, Snapshotter
+from wheel5.formats import TargetFormat
+from wheel5.metrics import ExactMatchAccuracy, JaccardAccuracy
 
 from data import DataBundle, load_dataset, prepare_train_bundle, prepare_eval_bundle, prepare_test_bundle, Transform
+
 
 
 class TransformsBundle(NamedTuple):
@@ -39,10 +44,12 @@ class ExperimentConfig(NamedTuple):
     hparams: Dict[str, float]
     max_epochs: int
     freeze: int
+    mixup: bool
 
 
 class ModelFitBundle(NamedTuple):
-    train: DataBundle
+    train1: DataBundle
+    train2: Optional[DataBundle]
     val: DataBundle
     ctrl: DataBundle
 
@@ -170,7 +177,7 @@ def prepare_model_test_bundle(dataset_config: Dict[str, str]) -> DataBundle:
     return bundle
 
 
-def prepare_model_fit_bundle(dataset_config: Dict[str, str]) -> ModelFitBundle:
+def prepare_model_fit_bundle(dataset_config: Dict[str, str], multi_train: bool) -> ModelFitBundle:
     dataset = load_dataset(dataset_config, TARGET_CLASSES, TRANSFORMS_BUNDLE.store)
 
     # Indices
@@ -185,9 +192,16 @@ def prepare_model_fit_bundle(dataset_config: Dict[str, str]) -> ModelFitBundle:
     train_indices, val_indices = indices[divider:], indices[:divider]
 
     # Bundles
-    train_dataset = AlbumentationsDataset(dataset, TRANSFORMS_BUNDLE.train)
-    train_dataset = TransformDataset(train_dataset, TRANSFORMS_BUNDLE.model)
-    train_bundle = prepare_train_bundle(train_dataset, list(train_indices))
+    train_dataset1 = AlbumentationsDataset(dataset, TRANSFORMS_BUNDLE.train)
+    train_dataset1 = TransformDataset(train_dataset1, TRANSFORMS_BUNDLE.model)
+    train_bundle1 = prepare_train_bundle(train_dataset1, list(train_indices))
+
+    if multi_train:
+        train_dataset2 = AlbumentationsDataset(dataset, TRANSFORMS_BUNDLE.train)
+        train_dataset2 = TransformDataset(train_dataset2, TRANSFORMS_BUNDLE.model)
+        train_bundle2 = prepare_train_bundle(train_dataset2, list(train_indices))
+    else:
+        train_bundle2 = None
 
     val_dataset = AlbumentationsDataset(dataset, TRANSFORMS_BUNDLE.eval)
     val_dataset = TransformDataset(val_dataset, TRANSFORMS_BUNDLE.model)
@@ -197,35 +211,42 @@ def prepare_model_fit_bundle(dataset_config: Dict[str, str]) -> ModelFitBundle:
     ctrl_dataset = TransformDataset(ctrl_dataset, TRANSFORMS_BUNDLE.model)
     ctrl_bundle = prepare_eval_bundle(ctrl_dataset, list(ctrl_indices), randomize=False)
 
-    return ModelFitBundle(train=train_bundle, val=val_bundle, ctrl=ctrl_bundle)
+    return ModelFitBundle(train1=train_bundle1,
+                          train2=train_bundle2,
+                          val=val_bundle,
+                          ctrl=ctrl_bundle)
 
 
-def fit_model(data_bundle: ModelFitBundle,
-              config: ExperimentConfig,
+def fit_model(dataset_config: Dict[str, str],
+              experiment_config: ExperimentConfig,
               device: Union[torch.device, int],
               tracker: Tracker,
               debug: bool,
               display_progress: bool) -> Dict[str, float]:
-    # Model preparation
-    model = torch.hub.load(config.repo, config.network, pretrained=True, verbose=False)
+    # Initialization
+    num_classes = len(TARGET_CLASSES)
+
+    # Data loading
+    data_bundle = prepare_model_fit_bundle(dataset_config, experiment_config.mixup)
+
+    # Adjusting model topology
+    model = torch.hub.load(experiment_config.repo, experiment_config.network, pretrained=True, verbose=False)
 
     old_fc = model.fc
-    model.fc = nn.Linear(in_features=old_fc.in_features, out_features=len(TARGET_CLASSES))
+    model.fc = nn.Linear(in_features=old_fc.in_features, out_features=num_classes)
 
-    target_probs = target_distribution(data_bundle.train.loader, classes=len(TARGET_CLASSES), display_progress=display_progress)
+    target_probs = target_distribution(data_bundle.train1.loader, classes=num_classes, display_progress=display_progress)
     init_softmax_logits(model.fc.bias, target_probs)
 
     model.type(torch.cuda.FloatTensor)
     model.to(device)
 
-    smooth_dist = torch.full([len(TARGET_CLASSES)], fill_value=1.0 / len(TARGET_CLASSES))
-    loss = SmoothedCrossEntropyLoss(smooth_factor=config.hparams['smooth'], smooth_dist=smooth_dist)
-
+    # Preparing parameters
     param_groups = {
-        'A': ParamGroup({'lr': config.hparams['lrA'], 'weight_decay': config.hparams['wdA']}),
-        'A_no_decay': ParamGroup({'lr': config.hparams['lrA'], 'weight_decay': 0}),
-        'B': ParamGroup({'lr': config.hparams['lrB'], 'weight_decay': config.hparams['wdB']}),
-        'B_no_decay': ParamGroup({'lr': config.hparams['lrB'], 'weight_decay': 0})
+        'A': ParamGroup({'lr': experiment_config.hparams['lrA'], 'weight_decay': experiment_config.hparams['wdA']}),
+        'A_no_decay': ParamGroup({'lr': experiment_config.hparams['lrA'], 'weight_decay': 0}),
+        'B': ParamGroup({'lr': experiment_config.hparams['lrB'], 'weight_decay': experiment_config.hparams['wdB']}),
+        'B_no_decay': ParamGroup({'lr': experiment_config.hparams['lrB'], 'weight_decay': 0})
     }
 
     def add_param(group_name: str, module_name: str, param_name: str, param: Parameter):
@@ -235,7 +256,7 @@ def fit_model(data_bundle: ModelFitBundle,
 
     def freeze_params():
         for index, (name, child) in enumerate(model.named_children()):
-            if index < config.freeze:
+            if index < experiment_config.freeze:
                 if debug:
                     print(f'Freezing layer {name}')
 
@@ -280,29 +301,51 @@ def fit_model(data_bundle: ModelFitBundle,
     init_param_groups()
     print_param_groups()
 
+    # Setting up optimizer/loss/scheduler/data retriever
     prepared_group_names, prepared_optimizer_params = prepare_optimizer_params()
     optimizer = optim.AdamW(prepared_optimizer_params)
     main_scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer,
-                                                                    T_0=int(round(config.hparams['cos_t0'])),
-                                                                    T_mult=int(round(config.hparams['cos_f'])))
+                                                                    T_0=int(round(experiment_config.hparams['cos_t0'])),
+                                                                    T_mult=int(round(experiment_config.hparams['cos_f'])))
     warmup_scheduler = WarmupScheduler(optimizer, epochs=3, next_scheduler=main_scheduler)
 
+    if experiment_config.mixup:
+        train_retriever = MixupDataRetriever(retriever1=DirectDataRetriever(data_bundle.train1.loader, target_format=TargetFormat.CLASS_INDEX),
+                                             retriever2=DirectDataRetriever(data_bundle.train2.loader, target_format=TargetFormat.CLASS_INDEX),
+                                             num_classes=num_classes,
+                                             alpha=experiment_config.hparams['alpha'])
+        train_accuracy = JaccardAccuracy()
+    else:
+        train_retriever = DirectDataRetriever(loader=data_bundle.train1.loader, target_format=TargetFormat.CLASS_INDEX)
+        train_accuracy = ExactMatchAccuracy()
+
+    smooth_dist = torch.full([num_classes], fill_value=1.0 / num_classes)
+    train_loss = SmoothedCrossEntropyLoss(smooth_factor=experiment_config.hparams['smooth'],
+                                          smooth_dist=smooth_dist,
+                                          target_format=train_retriever.target_format)
+
+    eval_accuracy = ExactMatchAccuracy()
+    eval_loss = CrossEntropyLoss()
+
     # Training setup
-    trial_tracker = tracker.new_trial(config.hparams)
+    trial_tracker = tracker.new_trial(experiment_config.hparams)
     fit(device,
         model,
         TARGET_CLASSES,
-        data_bundle.train.loader,
-        data_bundle.val.loader,
-        data_bundle.ctrl.loader,
-        loss,
-        optimizer,
-        warmup_scheduler,
+        train_retriever=train_retriever,
+        val_retriever=DirectDataRetriever(data_bundle.val.loader, target_format=TargetFormat.CLASS_INDEX),
+        ctrl_retriever=DirectDataRetriever(data_bundle.ctrl.loader, target_format=TargetFormat.CLASS_INDEX),
+        train_loss=train_loss,
+        eval_loss=eval_loss,
+        train_accuracy=train_accuracy,
+        eval_accuracy=eval_accuracy,
+        optimizer=optimizer,
+        scheduler=warmup_scheduler,
         group_names=prepared_group_names,
-        num_epochs=config.max_epochs,
+        num_epochs=experiment_config.max_epochs,
         tracker=trial_tracker,
         display_progress=display_progress,
-        sampled_epochs=config.max_epochs)
+        sampled_epochs=experiment_config.max_epochs)
 
     # Reporting
     metrics_df = trial_tracker.metrics_df
@@ -320,6 +363,25 @@ def fit_model(data_bundle: ModelFitBundle,
     trial_tracker.trial_completed(results)
 
     return results
+
+
+def score_model_blend(dataset_config: Dict[str, str],
+                      device: Union[torch.device, int],
+                      paths: List[Tuple[str, str]]):
+    test_bundle = prepare_model_test_bundle(dataset_config)
+
+    models = []
+    eval_loss = None
+    for directory, snapshot in paths:
+        snapshot = Snapshotter.load_snapshot(directory, snapshot)
+        model = snapshot.model.cpu()
+
+        models.append(model)
+        eval_loss = snapshot.eval_loss
+
+        del snapshot
+
+    score_blend(device, models, DirectDataRetriever(test_bundle.loader, target_format=TargetFormat.CLASS_INDEX), eval_loss)
 
 
 def target_distribution(loader: DataLoader, classes: int, display_progress: bool = True) -> torch.Tensor:
