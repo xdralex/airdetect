@@ -381,7 +381,7 @@ def score_model_blend(dataset_config: Dict[str, str],
 
         del snapshot
 
-    score_blend(device, models, DirectDataRetriever(test_bundle.loader, target_format=TargetFormat.CLASS_INDEX), eval_loss)
+    return score_blend(device, models, DirectDataRetriever(test_bundle.loader, target_format=TargetFormat.CLASS_INDEX), eval_loss)
 
 
 def target_distribution(loader: DataLoader, classes: int, display_progress: bool = True) -> torch.Tensor:

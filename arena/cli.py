@@ -68,7 +68,8 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
             'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1)),
             'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
             'cos_f': hp.uniform('cos_f', 1.999, 2.001),
-            'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1))
+            'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1)),
+            'alpha': hp.uniform('alpha', 0.1, 0.5)
         },
         'resnet50_wide': {
             'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-2)),
@@ -77,7 +78,8 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
             'wdB': hp.loguniform('wdB', math.log(1e-3), math.log(1e+1)),
             'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
             'cos_f': hp.uniform('cos_f', 1.999, 2.001),
-            'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1))
+            'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1)),
+            'alpha': hp.loguniform('alpha', math.log(1e-3), math.log(1e+1))
         },
 
         'resnet101_narrow': {
@@ -185,37 +187,35 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
 @click.option('--test', 'test', default='public', type=click.Choice(['public', 'private']), help='public/private test dataset')
 @click.option('--hide', 'hide', default='experiment,trial,time,directory,ctrl_loss,ctrl_acc,snapshot', type=str, help='columns to hide')
 def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, metric_name: str, order: str, test: str, hide: str):
-    # def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
-    #     return df.sort_values(by=metric_name, ascending=(order == 'asc'))
-    #
-    # with open('config.yaml', 'r') as config_file:
-    #     config = yaml.load(config_file, Loader=yaml.Loader)
-    # 
-    # device = torch.device(device_name)
-    #
-    # snapshot_cfg = snapshot_config(config)
-    # df_res = Tracker.load_trial_stats(snapshot_cfg, experiment)
-    # df_res = df_res[df_res['snapshot'] != '']
-    #
-    # if kind == 'final':
-    #     df_model = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
-    # elif kind == 'best':
-    #     df_model = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
-    # else:
-    #     raise click.BadOptionUsage('kind', f'Unsupported kind option: "{kind}"')
-    #
-    # df_top_models = df_model.head(top)
-    # drop_cols = [col.strip() for col in hide.split(',')]
-    # print(f'Averaging top models: \n\n{dump(df_top_models, drop_cols=drop_cols)}\n\n\n')
-    #
-    # print(f'Evaluating model performance on the >>{test}<< test dataset:\n')
-    # paths = [(row.directory, row.snapshot) for row in df_top_models.head(top).itertuples()]
-    # results = score_model_blend(dataset_config=config['datasets'][f'{test}_test'],
-    #                             device=device,
-    #                             paths=paths)
-    # print(results)
+    def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
+        return df.sort_values(by=metric_name, ascending=(order == 'asc'))
 
-    pass
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+
+    device = torch.device(device_name)
+
+    snapshot_cfg = snapshot_config(config)
+    df_res = Tracker.load_trial_stats(snapshot_cfg, experiment)
+    df_res = df_res[df_res['snapshot'] != '']
+
+    if kind == 'final':
+        df_model = metric_sort(df_res[df_res['epoch'] == df_res['num_epochs']])
+    elif kind == 'best':
+        df_model = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
+    else:
+        raise click.BadOptionUsage('kind', f'Unsupported kind option: "{kind}"')
+
+    df_top_models = df_model.head(top)
+    drop_cols = [col.strip() for col in hide.split(',')]
+    print(f'Averaging top models: \n\n{dump(df_top_models, drop_cols=drop_cols)}\n\n\n')
+
+    print(f'Evaluating model performance on the >>{test}<< test dataset:\n')
+    paths = [(row.directory, row.snapshot) for row in df_top_models.head(top).itertuples()]
+    results = score_model_blend(dataset_config=config['datasets'][f'{test}_test'],
+                                device=device,
+                                paths=paths)
+    print(results)
 
 
 @click.command(name='introspect-nn')
