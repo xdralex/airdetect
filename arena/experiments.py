@@ -15,7 +15,7 @@ from torch.nn import Parameter, CrossEntropyLoss
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
-from wheel5.data_retriever import TargetFormat, DirectDataRetriever, MixupDataRetriever
+from wheel5.data_retriever import TargetFormat, DirectDataRetriever, MixupDataRetriever, OneHotDataRetriever, CutMixDataRetriever
 from wheel5.dataset import TransformDataset, AlbumentationsDataset
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.model import fit
@@ -43,6 +43,7 @@ class ExperimentConfig(NamedTuple):
     max_epochs: int
     freeze: int
     mixup: bool
+    cutmix: bool
 
 
 class ModelFitBundle(NamedTuple):
@@ -115,28 +116,28 @@ def make_transforms_bundle():
 
     # Train/Eval transforms
     train_transform = albu.Compose([
-        albu.HueSaturationValue(hue_shift_limit=30, sat_shift_limit=30, val_shift_limit=30, p=1.0),
-        albu.HorizontalFlip(p=0.5),
+        # albu.HueSaturationValue(hue_shift_limit=30, sat_shift_limit=30, val_shift_limit=30, p=1.0),
+        # albu.HorizontalFlip(p=0.5),
 
         wheeltr_albu.PadToSquare(fill=mean_color),
-        albu.ShiftScaleRotate(shift_limit=0.1,
-                              scale_limit=(-0.25, 0.15),
-                              rotate_limit=20,
-                              border_mode=cv2.BORDER_CONSTANT,
-                              value=mean_color,
-                              interpolation=cv2.INTER_AREA,
-                              p=1.0),
+        # albu.ShiftScaleRotate(shift_limit=0.1,
+        #                       scale_limit=(-0.25, 0.15),
+        #                       rotate_limit=20,
+        #                       border_mode=cv2.BORDER_CONSTANT,
+        #                       value=mean_color,
+        #                       interpolation=cv2.INTER_AREA,
+        #                       p=1.0),
 
         wheeltr_albu.Resize(height=224, width=224, interpolation=cv2.INTER_AREA),
-        albu.MultiplicativeNoise(multiplier=(0.9, 1.1), p=1.0),
-        albu.CoarseDropout(max_holes=12,
-                           max_height=12,
-                           max_width=12,
-                           min_holes=6,
-                           min_height=6,
-                           min_width=6,
-                           fill_value=mean_color,
-                           p=1.0)
+        # albu.MultiplicativeNoise(multiplier=(0.9, 1.1), p=1.0),
+        # albu.CoarseDropout(max_holes=12,
+        #                    max_height=12,
+        #                    max_width=12,
+        #                    min_holes=6,
+        #                    min_height=6,
+        #                    min_width=6,
+        #                    fill_value=mean_color,
+        #                    p=1.0)
     ])
 
     eval_transform = albu.Compose([
@@ -225,7 +226,7 @@ def fit_model(dataset_config: Dict[str, str],
     num_classes = len(TARGET_CLASSES)
 
     # Data loading
-    data_bundle = prepare_model_fit_bundle(dataset_config, experiment_config.mixup)
+    data_bundle = prepare_model_fit_bundle(dataset_config, experiment_config.mixup or experiment_config.cutmix)
 
     # Adjusting model topology
     model = torch.hub.load(experiment_config.repo, experiment_config.network, pretrained=True, verbose=False)
@@ -308,19 +309,34 @@ def fit_model(dataset_config: Dict[str, str],
     warmup_scheduler = WarmupScheduler(optimizer, epochs=3, next_scheduler=main_scheduler)
 
     if experiment_config.mixup:
-        train_retriever = MixupDataRetriever(retriever1=DirectDataRetriever(data_bundle.train1.loader, target_format=TargetFormat.CLASS_INDEX),
-                                             retriever2=DirectDataRetriever(data_bundle.train2.loader, target_format=TargetFormat.CLASS_INDEX),
-                                             num_classes=num_classes,
-                                             alpha=experiment_config.hparams['alpha'])
+        train_retriever = MixupDataRetriever(
+            retriever1=OneHotDataRetriever(
+                DirectDataRetriever(data_bundle.train1.loader, target_format=TargetFormat.CLASS_INDEX),
+                num_classes=num_classes),
+            retriever2=OneHotDataRetriever(
+                DirectDataRetriever(data_bundle.train2.loader, target_format=TargetFormat.CLASS_INDEX),
+                num_classes=num_classes),
+            alpha=experiment_config.hparams['alpha'])
+        train_accuracy = JaccardAccuracy()
+    elif experiment_config.cutmix:
+        train_retriever = CutMixDataRetriever(
+            retriever1=OneHotDataRetriever(
+                DirectDataRetriever(data_bundle.train1.loader, target_format=TargetFormat.CLASS_INDEX),
+                num_classes=num_classes),
+            retriever2=OneHotDataRetriever(
+                DirectDataRetriever(data_bundle.train2.loader, target_format=TargetFormat.CLASS_INDEX),
+                num_classes=num_classes),
+            alpha=experiment_config.hparams['alpha'],
+            sync=True)
         train_accuracy = JaccardAccuracy()
     else:
-        train_retriever = DirectDataRetriever(loader=data_bundle.train1.loader, target_format=TargetFormat.CLASS_INDEX)
+        train_retriever = OneHotDataRetriever(
+            DirectDataRetriever(loader=data_bundle.train1.loader, target_format=TargetFormat.CLASS_INDEX),
+            num_classes=num_classes)
         train_accuracy = ExactMatchAccuracy()
 
     smooth_dist = torch.full([num_classes], fill_value=1.0 / num_classes)
-    train_loss = SoftLabelCrossEntropyLoss(smooth_factor=experiment_config.hparams['smooth'],
-                                          smooth_dist=smooth_dist,
-                                          target_format=train_retriever.target_format)
+    train_loss = SoftLabelCrossEntropyLoss(smooth_factor=experiment_config.hparams['smooth'], smooth_dist=smooth_dist)
 
     eval_accuracy = ExactMatchAccuracy()
     eval_loss = CrossEntropyLoss()

@@ -30,7 +30,8 @@ from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
 @click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
 @click.option('--freeze', 'freeze', default=-1, help='freeze first K layers (set to negative or zero to disable)', type=int)
 @click.option('--mixup', 'mixup', is_flag=True, help='apply mixup augmentation', type=bool)
-def cli_search(experiment: str, device_name: str, repo: str, network: str, space: str, trials: int, max_epochs: int, freeze: int, mixup: bool):
+@click.option('--cutmix', 'cutmix', is_flag=True, help='apply cutmix augmentation', type=bool)
+def cli_search(experiment: str, device_name: str, repo: str, network: str, space: str, trials: int, max_epochs: int, freeze: int, mixup: bool, cutmix: bool):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
@@ -49,7 +50,8 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
                                              hparams=hparams,
                                              max_epochs=max_epochs,
                                              freeze=freeze,
-                                             mixup=mixup)
+                                             mixup=mixup,
+                                             cutmix=cutmix)
 
         results = fit_model(dataset_config=config['datasets']['train'],
                             experiment_config=experiment_config,
@@ -134,7 +136,8 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
 @click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
 @click.option('--freeze', 'freeze', default=-1, help='freeze first K layers', type=int)
 @click.option('--mixup', 'mixup', is_flag=True, help='apply mixup augmentation', type=bool)
-def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_epochs: int, freeze: int, mixup: bool):
+@click.option('--cutmix', 'cutmix', is_flag=True, help='apply cutmix augmentation', type=bool)
+def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_epochs: int, freeze: int, mixup: bool, cutmix: bool):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
@@ -155,7 +158,7 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
         'cos_t0': 10,
         'cos_f': 2,
         'smooth': 0.0,
-        'alpha': 0.2
+        'alpha': 0.3
     }
 
     experiment_config = ExperimentConfig(repo=repo,
@@ -163,7 +166,8 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
                                          hparams=hparams,
                                          max_epochs=max_epochs,
                                          freeze=freeze,
-                                         mixup=mixup)
+                                         mixup=mixup,
+                                         cutmix=cutmix)
 
     results = fit_model(dataset_config=config['datasets']['train'],
                         experiment_config=experiment_config,
