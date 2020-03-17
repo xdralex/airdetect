@@ -5,8 +5,8 @@ import albumentations as albu
 import cv2
 import numpy as np
 import torch
-import wheel5.transforms_albumentations as wheeltr_albu
-import wheel5.transforms_torchvision as wheeltr_torch
+import wheel5.transforms.albumentations as wheeltr_albu
+import wheel5.transforms.torchvision as wheeltr_torch
 from PIL import Image
 from numpy.random.mtrand import RandomState
 from torch import nn
@@ -15,19 +15,17 @@ from torch.nn import Parameter, CrossEntropyLoss
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from tqdm import tqdm
-from wheel5.dataretriever import DirectDataRetriever, MixupDataRetriever
+from wheel5.data_retriever import TargetFormat, DirectDataRetriever, MixupDataRetriever
 from wheel5.dataset import TransformDataset, AlbumentationsDataset
-from wheel5.loss import SmoothedCrossEntropyLoss
+from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.model import fit
 from wheel5.model import score_blend
 from wheel5.nn import init_softmax_logits
 from wheel5.scheduler import WarmupScheduler
 from wheel5.tracking import Tracker, Snapshotter
-from wheel5.formats import TargetFormat
 from wheel5.metrics import ExactMatchAccuracy, JaccardAccuracy
 
 from data import DataBundle, load_dataset, prepare_train_bundle, prepare_eval_bundle, prepare_test_bundle, Transform
-
 
 
 class TransformsBundle(NamedTuple):
@@ -320,7 +318,7 @@ def fit_model(dataset_config: Dict[str, str],
         train_accuracy = ExactMatchAccuracy()
 
     smooth_dist = torch.full([num_classes], fill_value=1.0 / num_classes)
-    train_loss = SmoothedCrossEntropyLoss(smooth_factor=experiment_config.hparams['smooth'],
+    train_loss = SoftLabelCrossEntropyLoss(smooth_factor=experiment_config.hparams['smooth'],
                                           smooth_dist=smooth_dist,
                                           target_format=train_retriever.target_format)
 
