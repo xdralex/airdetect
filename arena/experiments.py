@@ -116,28 +116,28 @@ def make_transforms_bundle():
 
     # Train/Eval transforms
     train_transform = albu.Compose([
-        # albu.HueSaturationValue(hue_shift_limit=30, sat_shift_limit=30, val_shift_limit=30, p=1.0),
-        # albu.HorizontalFlip(p=0.5),
+        albu.HueSaturationValue(hue_shift_limit=30, sat_shift_limit=30, val_shift_limit=30, p=1.0),
+        albu.HorizontalFlip(p=0.5),
 
         wheeltr_albu.PadToSquare(fill=mean_color),
-        # albu.ShiftScaleRotate(shift_limit=0.1,
-        #                       scale_limit=(-0.25, 0.15),
-        #                       rotate_limit=20,
-        #                       border_mode=cv2.BORDER_CONSTANT,
-        #                       value=mean_color,
-        #                       interpolation=cv2.INTER_AREA,
-        #                       p=1.0),
+        albu.ShiftScaleRotate(shift_limit=0.1,
+                              scale_limit=(-0.25, 0.15),
+                              rotate_limit=20,
+                              border_mode=cv2.BORDER_CONSTANT,
+                              value=mean_color,
+                              interpolation=cv2.INTER_AREA,
+                              p=1.0),
 
         wheeltr_albu.Resize(height=224, width=224, interpolation=cv2.INTER_AREA),
-        # albu.MultiplicativeNoise(multiplier=(0.9, 1.1), p=1.0),
-        # albu.CoarseDropout(max_holes=12,
-        #                    max_height=12,
-        #                    max_width=12,
-        #                    min_holes=6,
-        #                    min_height=6,
-        #                    min_width=6,
-        #                    fill_value=mean_color,
-        #                    p=1.0)
+        albu.MultiplicativeNoise(multiplier=(0.9, 1.1), p=1.0),
+        albu.CoarseDropout(max_holes=12,
+                           max_height=12,
+                           max_width=12,
+                           min_holes=6,
+                           min_height=6,
+                           min_width=6,
+                           fill_value=mean_color,
+                           p=1.0)
     ])
 
     eval_transform = albu.Compose([
@@ -326,8 +326,7 @@ def fit_model(dataset_config: Dict[str, str],
             retriever2=OneHotDataRetriever(
                 DirectDataRetriever(data_bundle.train2.loader, target_format=TargetFormat.CLASS_INDEX),
                 num_classes=num_classes),
-            alpha=experiment_config.hparams['alpha'],
-            sync=True)
+            alpha=experiment_config.hparams['alpha'])
         train_accuracy = JaccardAccuracy()
     else:
         train_retriever = OneHotDataRetriever(

@@ -71,7 +71,7 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
             'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
             'cos_f': hp.uniform('cos_f', 1.999, 2.001),
             'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1)),
-            'alpha': hp.uniform('alpha', 0.1, 0.5)
+            'alpha': hp.uniform('alpha', 0.1, 1.0)
         },
         'resnet50_wide': {
             'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-2)),
@@ -151,14 +151,14 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
     launch_tensorboard(tracker.tensorboard_dir)
 
     hparams = {
-        'lrA': 0.000274734,
-        'lrB': 0.000320471,
-        'wdA': 0.143165,
-        'wdB': 0.239107,
+        'lrA': 0.0003,
+        'lrB': 0.0003,
+        'wdA': 0.1,
+        'wdB': 0.1,
         'cos_t0': 10,
         'cos_f': 2,
         'smooth': 0.0,
-        'alpha': 0.3
+        'alpha': 0.1
     }
 
     experiment_config = ExperimentConfig(repo=repo,
