@@ -6,6 +6,8 @@ from tabulate import tabulate
 from tensorboard import program
 from wheel5.tracking import SnapshotConfig, TensorboardConfig, CheckpointSnapshotter, BestCVSnapshotter
 
+from data import DatasetConfig
+
 
 def launch_tensorboard(tensorboard_root: str, port: int = 6006):
     logger = logging.getLogger('arena.util')
@@ -37,6 +39,14 @@ def tensorboard_config(config: Dict) -> TensorboardConfig:
                              track_weights=bool(config['track_weights']),
                              track_samples=bool(config['track_samples']),
                              track_predictions=bool(config['track_predictions']))
+
+
+def dataset_config(config: Dict, name: str) -> DatasetConfig:
+    return DatasetConfig(metadata=config[name]['metadata'],
+                         annotations=config[name]['annotations'],
+                         image_dir=config[name]['image_dir'],
+                         lmdb_dir=config[name]['lmdb_dir'],
+                         classes_path=config['classes'])
 
 
 def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[str]] = None) -> str:

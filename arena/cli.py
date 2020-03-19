@@ -16,8 +16,8 @@ from wheel5 import logutils
 from wheel5.introspection import introspect, make_dot
 from wheel5.tracking import Tracker, TrialTracker
 
-from experiments import ExperimentConfig, fit_model, score_model_blend, TRANSFORMS_BUNDLE
-from util import launch_tensorboard, dump, snapshot_config, tensorboard_config
+from .pipeline import PipelineFitConfig, fit_model, score_model_blend, PipelineTestConfig, make_sample_transform
+from .util import launch_tensorboard, dump, snapshot_config, tensorboard_config, dataset_config
 
 
 @click.command(name='search')
@@ -41,24 +41,27 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
     snapshot_cfg = snapshot_config(config)
     tensorboard_cfg = tensorboard_config(config)
 
-    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=TRANSFORMS_BUNDLE.sample)
+    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=make_sample_transform())
     launch_tensorboard(tracker.tensorboard_dir)
 
     def fit_model_trial(hparams: Dict[str, float]):
-        experiment_config = ExperimentConfig(repo=repo,
-                                             network=network,
-                                             hparams=hparams,
-                                             max_epochs=max_epochs,
-                                             freeze=freeze,
-                                             mixup=mixup,
-                                             cutmix=cutmix)
+        pipe_config = PipelineFitConfig(hparams=hparams,
 
-        results = fit_model(dataset_config=config['datasets']['train'],
-                            experiment_config=experiment_config,
+                                        repo=repo,
+                                        network=network,
+
+                                        max_epochs=max_epochs,
+                                        freeze=freeze,
+                                        mixup=mixup,
+                                        cutmix=cutmix,
+
+                                        display_progress=False,
+                                        print_model_transforms=False)
+
+        results = fit_model(pipe_config=pipe_config,
+                            dataset_config=dataset_config(config['datasets'], name='train'),
                             device=device,
-                            tracker=tracker,
-                            debug=False,
-                            display_progress=False)
+                            tracker=tracker)
 
         return results['hp/best_val_loss']
 
@@ -147,7 +150,7 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
     snapshot_cfg = snapshot_config(config)
     tensorboard_cfg = tensorboard_config(config)
 
-    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=TRANSFORMS_BUNDLE.sample)
+    tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=make_sample_transform())
     launch_tensorboard(tracker.tensorboard_dir)
 
     hparams = {
@@ -158,23 +161,23 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
         'cos_t0': 10,
         'cos_f': 2,
         'smooth': 0.0,
-        'alpha': 0.1
+        'alpha': 0.3
     }
 
-    experiment_config = ExperimentConfig(repo=repo,
-                                         network=network,
-                                         hparams=hparams,
-                                         max_epochs=max_epochs,
-                                         freeze=freeze,
-                                         mixup=mixup,
-                                         cutmix=cutmix)
+    pipe_config = PipelineFitConfig(hparams=hparams,
 
-    results = fit_model(dataset_config=config['datasets']['train'],
-                        experiment_config=experiment_config,
+                                    repo=repo,
+                                    network=network,
+
+                                    max_epochs=max_epochs,
+                                    freeze=freeze,
+                                    mixup=mixup,
+                                    cutmix=cutmix)
+
+    results = fit_model(pipe_config=pipe_config,
+                        dataset_config=dataset_config(config['datasets'], name='train'),
                         device=device,
-                        tracker=tracker,
-                        debug=True,
-                        display_progress=True)
+                        tracker=tracker)
 
     print(json.dumps(results, indent=4))
 
@@ -216,7 +219,10 @@ def cli_eval_top_blend(experiment: str, device_name: str, kind: str, top: int, m
 
     print(f'Evaluating model performance on the >>{test}<< test dataset:\n')
     paths = [(row.directory, row.snapshot) for row in df_top_models.head(top).itertuples()]
-    results = score_model_blend(dataset_config=config['datasets'][f'{test}_test'],
+
+    pipe_config = PipelineTestConfig()
+    results = score_model_blend(pipe_config=pipe_config,
+                                dataset_config=dataset_config(config['datasets'], name=f'{test}_test'),
                                 device=device,
                                 paths=paths)
     print(results)
