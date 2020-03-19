@@ -17,6 +17,7 @@ from torch.utils.data import Subset, SubsetRandomSampler, DataLoader
 from torchvision import transforms
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageDataset, LMDBImageDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, \
     SequentialSubsetSampler
+from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.metrics import ExactMatchAccuracy, JaccardAccuracy
 from wheel5.model import fit
@@ -25,8 +26,7 @@ from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
 from wheel5.tracking import Tracker, Snapshotter
 
-from dataset.functional import class_distribution
-from .data import load_dataset, DatasetConfig, load_classes
+from data import load_dataset, DatasetConfig, load_classes
 
 
 # TODO: INTER_AREA

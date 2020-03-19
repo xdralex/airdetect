@@ -10,22 +10,24 @@ tracker:
 
 datasets:
   train:
-    image_dir: /data/ssd/datasets/airliners/train
     metadata: /data/ssd/datasets/airliners/train.csv
     annotations: /data/ssd/datasets/airliners/ext_train.csv
+    image_dir: /data/ssd/datasets/airliners/train
     lmdb_dir: /data/nvme/run/airliners/lmdb/train
 
   public_test:
-    image_dir: /data/ssd/datasets/airliners/public_test
     metadata: /data/ssd/datasets/airliners/public_test.csv
     annotations: /data/ssd/datasets/airliners/ext_public_test.csv
+    image_dir: /data/ssd/datasets/airliners/public_test
     lmdb_dir: /data/nvme/run/airliners/lmdb/public_test
 
   private_test:
-    image_dir: /data/ssd/datasets/airliners/private_test
     metadata: /data/ssd/datasets/airliners/private_test.csv
     annotations: /data/ssd/datasets/airliners/ext_private_test.csv
+    image_dir: /data/ssd/datasets/airliners/private_test
     lmdb_dir: /data/nvme/run/airliners/lmdb/private_test
+
+  classes: /data/ssd/datasets/airliners/classes
 
 
 viz:

@@ -16,8 +16,8 @@ from wheel5 import logutils
 from wheel5.introspection import introspect, make_dot
 from wheel5.tracking import Tracker, TrialTracker
 
-from .pipeline import PipelineFitConfig, fit_model, score_model_blend, PipelineTestConfig, make_sample_transform
-from .util import launch_tensorboard, dump, snapshot_config, tensorboard_config, dataset_config
+from pipeline import PipelineFitConfig, fit_model, score_model_blend, PipelineTestConfig, make_sample_transform
+from util import launch_tensorboard, dump, snapshot_config, tensorboard_config, dataset_config
 
 
 @click.command(name='search')
@@ -161,7 +161,7 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
         'cos_t0': 10,
         'cos_f': 2,
         'smooth': 0.0,
-        'alpha': 0.3
+        'cutmix_alpha': 0.3
     }
 
     pipe_config = PipelineFitConfig(hparams=hparams,
