@@ -161,7 +161,8 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
         'cos_t0': 10,
         'cos_f': 2,
         'smooth': 0.0001,
-        'cutmix_alpha': 0.9
+        'cutmix_alpha': 0.9,
+        'mixup_alpha': 0.3
     }
 
     pipe_config = PipelineFitConfig(hparams=hparams,

@@ -15,7 +15,7 @@ from torch.optim.adamw import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import Subset, SubsetRandomSampler, DataLoader
 from torchvision import transforms
-from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageDataset, LMDBImageDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, \
+from wheel5.dataset import TransformDataset, AlbumentationsDataset, LMDBImageDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, \
     SequentialSubsetSampler
 from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
@@ -88,10 +88,12 @@ def prepare_fit_data(pipe_config: PipelineFitConfig,
         torchviz_ext.Rescale(scale=0.5, interpolation=Image.LANCZOS)
     ])
 
-    train_transform = albu.Compose([
+    train_transform_pre_cutmix = albu.Compose([
         albu.HueSaturationValue(hue_shift_limit=30, sat_shift_limit=30, val_shift_limit=30, p=1.0),
-        albu.HorizontalFlip(p=0.5),
+        albu.HorizontalFlip(p=0.5)
+    ])
 
+    train_transform_pre_mixup = albu.Compose([
         albu_ext.PadToSquare(fill=mean_color),
         albu.ShiftScaleRotate(shift_limit=0.1,
                               scale_limit=(-0.25, 0.15),
@@ -100,8 +102,10 @@ def prepare_fit_data(pipe_config: PipelineFitConfig,
                               value=mean_color,
                               interpolation=cv2.INTER_AREA,
                               p=1.0),
-
         albu_ext.Resize(height=224, width=224, interpolation=cv2.INTER_AREA),
+    ])
+
+    train_transform_final = albu.Compose([
         albu.MultiplicativeNoise(multiplier=(0.9, 1.1), p=1.0),
         albu.CoarseDropout(max_holes=12,
                            max_height=12,
@@ -139,24 +143,26 @@ def prepare_fit_data(pipe_config: PipelineFitConfig,
     val_divider = int(np.round(pipe_config.val_split * len(train_val_indices)))
     train_indices, val_indices = indices[val_divider:], indices[:val_divider]
 
-    train_dataset = cast(ImageDataset[int], Subset(dataset, train_indices))
-    val_dataset = cast(ImageDataset[int], Subset(dataset, val_indices))
-    ctrl_dataset = cast(ImageDataset[int], Subset(dataset, ctrl_indices))
+    train_dataset = Subset(dataset, train_indices)
+    val_dataset = Subset(dataset, val_indices)
+    ctrl_dataset = Subset(dataset, ctrl_indices)
 
     #
     # Train transformations
     #
     train_dataset = ImageOneHotDataset(train_dataset, len(target_classes))
 
+    train_dataset = AlbumentationsDataset(train_dataset, train_transform_pre_cutmix)
     if pipe_config.cutmix:
         cutmix_alpha = pipe_config.hparams['cutmix_alpha']
         train_dataset = ImageCutMixDataset(train_dataset, alpha=cutmix_alpha, random_state=random_state)
 
+    train_dataset = AlbumentationsDataset(train_dataset, train_transform_pre_mixup)
     if pipe_config.mixup:
         mixup_alpha = pipe_config.hparams['mixup_alpha']
         train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, random_state=random_state)
 
-    train_dataset = AlbumentationsDataset(train_dataset, train_transform)
+    train_dataset = AlbumentationsDataset(train_dataset, train_transform_final)
     train_dataset = TransformDataset(train_dataset, model_transform)
 
     #
