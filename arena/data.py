@@ -42,4 +42,5 @@ def load_dataset(config: DatasetConfig, target_classes: List[str], store_transfo
 
 def load_classes(path: str) -> List[str]:
     with open(path, 'r') as f:
-        return [line.strip() for line in f.readlines()]
+        lines = [line.strip() for line in f.readlines()]
+        return [line for line in lines if line != '']
