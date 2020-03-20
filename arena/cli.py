@@ -74,7 +74,7 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
             'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
             'cos_f': hp.uniform('cos_f', 1.999, 2.001),
             'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1)),
-            'alpha': hp.uniform('alpha', 0.1, 1.0)
+            'cutmix_alpha': hp.uniform('alpha', 0.05, 1.0)
         },
         'resnet50_wide': {
             'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-2)),
@@ -84,7 +84,7 @@ def cli_search(experiment: str, device_name: str, repo: str, network: str, space
             'cos_t0': hp.uniform('cos_t0', 9.999, 10.001),
             'cos_f': hp.uniform('cos_f', 1.999, 2.001),
             'smooth': hp.loguniform('smooth', math.log(1e-4), math.log(1)),
-            'alpha': hp.loguniform('alpha', math.log(1e-3), math.log(1e+1))
+            'cutmix_alpha': hp.loguniform('alpha', math.log(1e-3), math.log(1e+1))
         },
 
         'resnet101_narrow': {
@@ -160,8 +160,8 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
         'wdB': 0.1,
         'cos_t0': 10,
         'cos_f': 2,
-        'smooth': 0.0,
-        'cutmix_alpha': 0.3
+        'smooth': 0.0001,
+        'cutmix_alpha': 0.9
     }
 
     pipe_config = PipelineFitConfig(hparams=hparams,
