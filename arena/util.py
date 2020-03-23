@@ -4,9 +4,9 @@ from typing import Dict, List, Optional
 import pandas as pd
 from tabulate import tabulate
 from tensorboard import program
-from wheel5.tracking import SnapshotConfig, TensorboardConfig, CheckpointSnapshotter, BestCVSnapshotter
 
-from data import DatasetConfig
+from pipelines.aircraft_classification import DatasetConfig
+from wheel5.tracking import SnapshotConfig, TensorboardConfig, CheckpointSnapshotter, BestCVSnapshotter
 
 
 def launch_tensorboard(tensorboard_root: str, port: int = 6006):
@@ -45,8 +45,7 @@ def dataset_config(config: Dict, name: str) -> DatasetConfig:
     return DatasetConfig(metadata=config[name]['metadata'],
                          annotations=config[name]['annotations'],
                          image_dir=config[name]['image_dir'],
-                         lmdb_dir=config[name]['lmdb_dir'],
-                         classes_path=config['classes'])
+                         lmdb_dir=config[name]['lmdb_dir'])
 
 
 def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[str]] = None) -> str:

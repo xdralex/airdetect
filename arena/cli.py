@@ -11,6 +11,7 @@ import torch
 import yaml
 from hyperopt import hp, fmin
 from pytorch_lightning import Trainer
+from pytorch_lightning.loggers import TensorBoardLogger
 from torch import nn
 from torchsummary import summary
 
@@ -202,13 +203,8 @@ def cli_trial_lightning(experiment: str, device_name: str, repo: str, network: s
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
 
-    # device = torch.device(device_name)
-
-    snapshot_cfg = snapshot_config(config)
-    tensorboard_cfg = tensorboard_config(config)
-
-    # tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=make_sample_transform())
-    # launch_tensorboard(tracker.tensorboard_dir)
+    tensorboard_dir = '/data/ssd/run/airliners/tensorboard_check'
+    launch_tensorboard(tensorboard_dir)
 
     hparams = {
         'lrA': 0.0003,
@@ -223,30 +219,32 @@ def cli_trial_lightning(experiment: str, device_name: str, repo: str, network: s
         'mixup_alpha': 0.3
     }
 
-    config = AircraftClassificationConfig(random_state_seed=42,
+    pipeline_config = AircraftClassificationConfig(
+        random_state_seed=42,
 
-                                          classes_path='/data/ssd/datasets/airliners/classes',
-                                          fit_dataset_config=dataset_config(config['datasets'], name='train'),
-                                          test_dataset_config=dataset_config(config['datasets'], name='public_test'),
+        classes_path='/data/ssd/datasets/airliners/classes',
+        fit_dataset_config=dataset_config(config['datasets'], name='train'),
+        test_dataset_config=dataset_config(config['datasets'], name='public_test'),
 
-                                          repo=repo,
-                                          network=network,
+        repo=repo,
+        network=network,
 
-                                          freeze=freeze,
-                                          mixup=mixup,
-                                          cutmix=cutmix,
+        freeze=freeze,
+        mixup=mixup,
+        cutmix=cutmix
+    )
 
-                                          hparams=hparams)
-
-    pipeline = AircraftClassificationPipeline(config)
-
-    trainer = Trainer(gpus=1,
+    pipeline = AircraftClassificationPipeline(config=pipeline_config, hparams=hparams)
+    logger = TensorBoardLogger(save_dir=tensorboard_dir)
+    trainer = Trainer(logger=logger,
+                      gpus=1,
                       max_epochs=max_epochs,
                       progress_bar_refresh_rate=1,
                       num_sanity_val_steps=0)
+
     trainer.fit(pipeline)
 
-    # input("\nTrial completed, press Enter to exit (this will terminate TensorBoard)\n")
+    input("\nTrial completed, press Enter to exit (this will terminate TensorBoard)\n")
 
 
 @click.command(name='eval-top-blend')

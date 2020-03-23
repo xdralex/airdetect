@@ -1,12 +1,15 @@
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Optional, Callable
 
 import albumentations as albu
 import cv2
 import numpy as np
+import pandas as pd
 import pytorch_lightning as pl
 import torch
 from PIL import Image
+from PIL.Image import Image as Img
 from numpy.random.mtrand import RandomState
 from torch import nn
 from torch.nn import Parameter, CrossEntropyLoss
@@ -18,14 +21,16 @@ from torchvision import transforms
 
 import wheel5.transforms.albumentations as albu_ext
 import wheel5.transforms.torchvision as torchviz_ext
-from data import load_dataset, load_classes
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, \
-    targets
+    targets, LMDBImageDataset
 from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.metrics import ExactMatchAccuracy, JaccardAccuracy
 from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
+
+
+Transform = Callable[[Img], Img]
 
 
 @dataclass
@@ -51,8 +56,6 @@ class AircraftClassificationConfig:
     mixup: bool
     cutmix: bool
 
-    hparams: Dict[str, float]
-
     print_model_transforms: bool = True
 
     val_split: float = 0.2
@@ -66,13 +69,14 @@ class AircraftClassificationConfig:
 
 class AircraftClassificationPipeline(pl.LightningModule):
 
-    def __init__(self, config: AircraftClassificationConfig):
+    def __init__(self, config: AircraftClassificationConfig, hparams: Dict[str, float]):
         super(AircraftClassificationPipeline, self).__init__()
 
         self.config = config
+        self.hparams = hparams
         self.random_state = RandomState(config.random_state_seed)
 
-        self.target_classes = load_classes(config.classes_path)
+        self.target_classes = self.load_classes(config.classes_path)
         self.num_classes = len(self.target_classes)
 
         self.train_loader = None
@@ -87,7 +91,7 @@ class AircraftClassificationPipeline(pl.LightningModule):
         self.group_names, self.optimizer_params = self.adjust_model_params()
 
         smooth_dist = torch.full([self.num_classes], fill_value=1.0 / self.num_classes)
-        self.train_loss = SoftLabelCrossEntropyLoss(smooth_factor=self.config.hparams['loss_smooth'], smooth_dist=smooth_dist)
+        self.train_loss = SoftLabelCrossEntropyLoss(smooth_factor=self.hparams['loss_smooth'], smooth_dist=smooth_dist)
         self.train_accuracy = JaccardAccuracy()
 
         self.eval_loss = CrossEntropyLoss()
@@ -95,10 +99,10 @@ class AircraftClassificationPipeline(pl.LightningModule):
 
     def adjust_model_params(self):
         param_groups = {
-            'A': ParamGroup({'lr': self.config.hparams['lrA'], 'weight_decay': self.config.hparams['wdA']}),
-            'A_no_decay': ParamGroup({'lr': self.config.hparams['lrA'], 'weight_decay': 0}),
-            'B': ParamGroup({'lr': self.config.hparams['lrB'], 'weight_decay': self.config.hparams['wdB']}),
-            'B_no_decay': ParamGroup({'lr': self.config.hparams['lrB'], 'weight_decay': 0})
+            'A': ParamGroup({'lr': self.hparams['lrA'], 'weight_decay': self.hparams['wdA']}),
+            'A_no_decay': ParamGroup({'lr': self.hparams['lrA'], 'weight_decay': 0}),
+            'B': ParamGroup({'lr': self.hparams['lrB'], 'weight_decay': self.hparams['wdB']}),
+            'B_no_decay': ParamGroup({'lr': self.hparams['lrB'], 'weight_decay': 0})
         }
 
         def add_param(group_name: str, module_name: str, param_name: str, param: Parameter):
@@ -210,8 +214,8 @@ class AircraftClassificationPipeline(pl.LightningModule):
         #
         # Dataset loading
         #
-        fit_dataset = load_dataset(self.config.fit_dataset_config, self.target_classes, store_transform)
-        test_dataset = load_dataset(self.config.test_dataset_config, self.target_classes, store_transform)
+        fit_dataset = self.load_dataset(self.config.fit_dataset_config, self.target_classes, store_transform)
+        test_dataset = self.load_dataset(self.config.test_dataset_config, self.target_classes, store_transform)
 
         #
         # Split into train/val/ctrl
@@ -238,12 +242,12 @@ class AircraftClassificationPipeline(pl.LightningModule):
 
         train_dataset = AlbumentationsDataset(train_dataset, train_transform_pre_cutmix)
         if self.config.cutmix:
-            cutmix_alpha = self.config.hparams['cutmix_alpha']
+            cutmix_alpha = self.hparams['cutmix_alpha']
             train_dataset = ImageCutMixDataset(train_dataset, alpha=cutmix_alpha, random_state=self.random_state)
 
         train_dataset = AlbumentationsDataset(train_dataset, train_transform_pre_mixup)
         if self.config.mixup:
-            mixup_alpha = self.config.hparams['mixup_alpha']
+            mixup_alpha = self.hparams['mixup_alpha']
             train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, random_state=self.random_state)
 
         train_dataset = AlbumentationsDataset(train_dataset, train_transform_final)
@@ -302,9 +306,9 @@ class AircraftClassificationPipeline(pl.LightningModule):
         optimizer = AdamW(self.optimizer_params)
 
         scheduler = CosineAnnealingWarmRestarts(optimizer,
-                                                T_0=int(round(self.config.hparams['lr_cos_t0'])),
-                                                T_mult=int(round(self.config.hparams['lr_cos_f'])))
-        scheduler = WarmupScheduler(optimizer, epochs=self.config.hparams['lr_warmup_epochs'], next_scheduler=scheduler)
+                                                T_0=int(round(self.hparams['lr_cos_t0'])),
+                                                T_mult=int(round(self.hparams['lr_cos_f'])))
+        scheduler = WarmupScheduler(optimizer, epochs=self.hparams['lr_warmup_epochs'], next_scheduler=scheduler)
 
         return [optimizer], [scheduler]
 
@@ -318,9 +322,6 @@ class AircraftClassificationPipeline(pl.LightningModule):
 
         loss = self.train_loss(z, y)
         return {'loss': loss}
-
-    def training_epoch_end(self, outputs) -> Dict:
-        pass
 
     def train_dataloader(self) -> DataLoader:
         return self.train_loader
@@ -354,7 +355,7 @@ class AircraftClassificationPipeline(pl.LightningModule):
         }
 
     def validation_epoch_end(self, outputs: List[Dict]) -> Dict:
-        progress_bar = {}
+        metrics = OrderedDict()
         for dataloader_idx, output in enumerate(outputs):
             if dataloader_idx == 0:  # val_loader
                 prefix = 'val'
@@ -371,25 +372,45 @@ class AircraftClassificationPipeline(pl.LightningModule):
             total_sum = torch.stack([x[f'{prefix}_total'] for x in output]).sum()
             accuracy = correct_sum / float(total_sum)
 
-            progress_bar[f'{prefix}_loss'] = loss
-            progress_bar[f'{prefix}_acc'] = accuracy
+            metrics[f'{prefix}_loss'] = loss
+            metrics[f'{prefix}_acc'] = accuracy
 
-        return {'progress_bar': progress_bar}
+        progress_bar = metrics
+
+        log = {f'fit/{k}': v for k, v in metrics.items()}
+        log['step'] = self.current_epoch
+
+        return {'progress_bar': progress_bar, 'log': log}
 
     def val_dataloader(self) -> List[DataLoader]:
         return [self.val_loader, self.train_subset_loader, self.train_orig_loader]
 
-    def test_step(self, batch, batch_idx) -> Dict:
-        x, y, _ = batch
+    @staticmethod
+    def load_dataset(config: DatasetConfig, target_classes: List[str], store_transform: Optional[Transform] = None) -> LMDBImageDataset:
+        df_metadata = pd.read_csv(filepath_or_buffer=config.metadata, sep=',', header=0)
+        df_annotations = pd.read_csv(filepath_or_buffer=config.annotations, sep=',', header=0)
 
-        y_hat = self.forward(x)
-        loss = self.eval_loss(y_hat, y)
+        categories_dict = {}
+        for row in df_annotations.itertuples():
+            categories_dict[row.path] = row.category
 
-        return {'test_loss': loss}
+        classes_map = {cls: i for i, cls in enumerate(target_classes)}
 
-    def test_epoch_end(self, outputs) -> Dict:
-        val_loss_mean = torch.stack([x['test_loss'] for x in outputs]).mean()
-        return {'test_loss': val_loss_mean}
+        df_metadata['target'] = df_metadata['name'].map(lambda name: classes_map[name])
+        df_metadata['category'] = df_metadata['path'].map(lambda path: categories_dict[path])
 
-    def test_dataloader(self) -> DataLoader:
-        return self.test_loader
+        df_metadata = df_metadata[df_metadata['category'] == 'normal']
+        df_metadata = df_metadata.drop(columns=['name', 'category'])
+
+        dataset = LMDBImageDataset.cached(df_metadata,
+                                          image_dir=config.image_dir,
+                                          lmdb_path=config.lmdb_dir,
+                                          transform=store_transform)
+
+        return dataset
+
+    @staticmethod
+    def load_classes(path: str) -> List[str]:
+        with open(path, 'r') as f:
+            lines = [line.strip() for line in f.readlines()]
+            return [line for line in lines if line != '']
