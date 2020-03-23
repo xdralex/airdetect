@@ -14,6 +14,7 @@ from torch.nn import Parameter, CrossEntropyLoss
 from torch.optim.adamw import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import Subset, SubsetRandomSampler, DataLoader
+from torch.nn.functional import log_softmax
 import pytorch_lightning as pl
 from torchvision import transforms
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, LMDBImageDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, \
@@ -293,9 +294,9 @@ class AircraftClassificationPipeline(pl.LightningModule):
     def training_step(self, batch, batch_idx) -> Dict:
         x, y, _ = batch
 
-        y_hat = self.forward(x)
-        loss = self.train_loss(y_hat, y)
+        z = self.forward(x)
 
+        loss = self.train_loss(z, y)
         return {'loss': loss}
 
     def training_epoch_end(self, outputs) -> Dict:
@@ -307,14 +308,22 @@ class AircraftClassificationPipeline(pl.LightningModule):
     def validation_step(self, batch, batch_idx) -> Dict:
         x, y, _ = batch
 
-        y_hat = self.forward(x)
-        loss = self.eval_loss(y_hat, y)
+        z = self.forward(x)
+        y_probs = torch.exp(log_softmax(z, dim=1))
+        y_hat = torch.argmax(y_probs, dim=1)
 
-        return {'val_loss': loss}
+        loss = self.eval_loss(z, y)
+        correct, total = self.eval_accuracy(y_hat, y)
+        return {'val_loss': loss, 'val_correct': correct, 'val_total': total}
 
     def validation_epoch_end(self, outputs) -> Dict:
-        val_loss_mean = torch.stack([x['val_loss'] for x in outputs]).mean()
-        return {'val_loss': val_loss_mean}
+        val_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
+
+        val_correct_sum = torch.stack([x['val_correct'] for x in outputs]).sum()
+        val_total_sum = torch.stack([x['val_total'] for x in outputs]).sum()
+        val_accuracy = val_correct_sum / float(val_total_sum)
+
+        return {'progress_bar': {'val_loss': val_loss, 'val_acc': val_accuracy}}
 
     def val_dataloader(self) -> DataLoader:
         return self.val_loader
