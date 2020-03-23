@@ -10,8 +10,11 @@ import pandas as pd
 import torch
 import yaml
 from hyperopt import hp, fmin
+from pytorch_lightning import Trainer
 from torch import nn
 from torchsummary import summary
+
+from pipelines.aircraft_classification import AircraftClassificationConfig, AircraftClassificationPipeline
 from wheel5 import logutils
 from wheel5.introspection import introspect, make_dot
 from wheel5.tracking import Tracker, TrialTracker
@@ -183,6 +186,67 @@ def cli_trial(experiment: str, device_name: str, repo: str, network: str, max_ep
     print(json.dumps(results, indent=4))
 
     input("\nTrial completed, press Enter to exit (this will terminate TensorBoard)\n")
+
+
+@click.command(name='trial-lightning')
+@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
+@click.option('-d', '--device', 'device_name', default='cuda:0', help='device name (cuda:0, cuda:1, ...)', type=str)
+@click.option('-r', '--repo', 'repo', default='pytorch/vision:v0.4.2', help='repository (e.g. pytorch/vision:v0.4.2)', type=str)
+@click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
+@click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
+@click.option('--freeze', 'freeze', default=-1, help='freeze first K layers', type=int)
+@click.option('--mixup', 'mixup', is_flag=True, help='apply mixup augmentation', type=bool)
+@click.option('--cutmix', 'cutmix', is_flag=True, help='apply cutmix augmentation', type=bool)
+def cli_trial_lightning(experiment: str, device_name: str, repo: str, network: str, max_epochs: int, freeze: int, mixup: bool, cutmix: bool):
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
+
+    # device = torch.device(device_name)
+
+    snapshot_cfg = snapshot_config(config)
+    tensorboard_cfg = tensorboard_config(config)
+
+    # tracker = Tracker(snapshot_cfg, tensorboard_cfg, experiment=experiment, sample_img_transform=make_sample_transform())
+    # launch_tensorboard(tracker.tensorboard_dir)
+
+    hparams = {
+        'lrA': 0.0003,
+        'lrB': 0.0003,
+        'wdA': 0.1,
+        'wdB': 0.1,
+        'lr_cos_t0': 10,
+        'lr_cos_f': 2,
+        'lr_warmup_epochs': 3,
+        'loss_smooth': 0.0001,
+        'cutmix_alpha': 0.9,
+        'mixup_alpha': 0.3
+    }
+
+    config = AircraftClassificationConfig(random_state_seed=42,
+
+                                          classes_path='/data/ssd/datasets/airliners/classes',
+                                          fit_dataset_config=dataset_config(config['datasets'], name='train'),
+                                          test_dataset_config=dataset_config(config['datasets'], name='public_test'),
+
+                                          repo=repo,
+                                          network=network,
+
+                                          freeze=freeze,
+                                          mixup=mixup,
+                                          cutmix=cutmix,
+
+                                          hparams=hparams)
+
+    pipeline = AircraftClassificationPipeline(config)
+
+    trainer = Trainer(gpus=1,
+                      max_epochs=max_epochs,
+                      progress_bar_refresh_rate=1,
+                      num_sanity_val_steps=0)
+    trainer.fit(pipeline)
+
+    # input("\nTrial completed, press Enter to exit (this will terminate TensorBoard)\n")
 
 
 @click.command(name='eval-top-blend')
@@ -380,6 +444,7 @@ def cli():
 
 if __name__ == "__main__":
     cli.add_command(cli_trial)
+    cli.add_command(cli_trial_lightning)
     cli.add_command(cli_search)
     cli.add_command(cli_eval_top_blend)
 

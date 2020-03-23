@@ -1,4 +1,5 @@
 numpy
+scikit-learn
 pandas
 psycopg2-binary
 hyperopt
@@ -9,11 +10,8 @@ torchviz
 torchsummary
 hiddenlayer
 
-
-
-numpy
-scikit-learn
 torch>=1.4.0
+pytorch-lightning
 torchvision
 tensorflow
 albumentations
