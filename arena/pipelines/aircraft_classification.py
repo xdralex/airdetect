@@ -1,34 +1,31 @@
 from dataclasses import dataclass
-from typing import Dict, Union, Tuple, List, cast
+from typing import Dict, List
 
 import albumentations as albu
 import cv2
 import numpy as np
+import pytorch_lightning as pl
 import torch
-import wheel5.transforms.albumentations as albu_ext
-import wheel5.transforms.torchvision as torchviz_ext
 from PIL import Image
 from numpy.random.mtrand import RandomState
 from torch import nn
 from torch.nn import Parameter, CrossEntropyLoss
+from torch.nn.functional import log_softmax
 from torch.optim.adamw import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
-from torch.utils.data import Subset, SubsetRandomSampler, DataLoader
-from torch.nn.functional import log_softmax
-import pytorch_lightning as pl
+from torch.utils.data import Subset, DataLoader
 from torchvision import transforms
-from wheel5.dataset import TransformDataset, AlbumentationsDataset, LMDBImageDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, \
-    SequentialSubsetSampler, targets
+
+import wheel5.transforms.albumentations as albu_ext
+import wheel5.transforms.torchvision as torchviz_ext
+from data import load_dataset, load_classes
+from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, \
+    targets
 from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.metrics import ExactMatchAccuracy, JaccardAccuracy
-from wheel5.model import fit
-from wheel5.model import score_blend
 from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
-from wheel5.tracking import Tracker, Snapshotter
-
-from data import load_dataset, DatasetConfig, load_classes
 
 
 @dataclass
@@ -59,6 +56,7 @@ class AircraftClassificationConfig:
     print_model_transforms: bool = True
 
     val_split: float = 0.2
+    train_sample: float = 0.25
 
     train_batch: int = 32
     train_workers: int = 4
@@ -78,6 +76,8 @@ class AircraftClassificationPipeline(pl.LightningModule):
         self.num_classes = len(self.target_classes)
 
         self.train_loader = None
+        self.train_subset_loader = None
+        self.train_orig_loader = None
         self.val_loader = None
         self.test_loader = None
 
@@ -220,17 +220,21 @@ class AircraftClassificationPipeline(pl.LightningModule):
         self.random_state.shuffle(fit_indices)
 
         val_divider = int(np.round(self.config.val_split * len(fit_indices)))
-        train_indices, val_indices = fit_indices[val_divider:], fit_indices[:val_divider]
+        before_val_indices, after_val_indices = fit_indices[val_divider:], fit_indices[:val_divider]
 
-        train_dataset = Subset(fit_dataset, train_indices)
-        val_dataset = Subset(fit_dataset, val_indices)
+        train_root_dataset = Subset(fit_dataset, before_val_indices)
+        val_dataset = Subset(fit_dataset, after_val_indices)
 
-        train_dataset_targets = targets(train_dataset)
+        train_targets = targets(train_root_dataset)
+
+        train_root_indices = list(range(0, len(train_targets)))
+        train_sample_size = int(len(train_root_indices) * self.config.train_sample)
+        train_sample_indices = self.random_state.choice(train_root_indices, size=train_sample_size, replace=False)
 
         #
         # Train transformations
         #
-        train_dataset = ImageOneHotDataset(train_dataset, self.num_classes)
+        train_dataset = ImageOneHotDataset(train_root_dataset, self.num_classes)
 
         train_dataset = AlbumentationsDataset(train_dataset, train_transform_pre_cutmix)
         if self.config.cutmix:
@@ -245,9 +249,15 @@ class AircraftClassificationPipeline(pl.LightningModule):
         train_dataset = AlbumentationsDataset(train_dataset, train_transform_final)
         train_dataset = TransformDataset(train_dataset, model_transform)
 
+        train_subset_dataset = Subset(train_dataset, train_sample_indices)
+
         #
         # Eval transformations
         #
+        train_orig_dataset = Subset(train_root_dataset, train_sample_indices)
+        train_orig_dataset = AlbumentationsDataset(train_orig_dataset, eval_transform)
+        train_orig_dataset = TransformDataset(train_orig_dataset, model_transform)
+
         val_dataset = AlbumentationsDataset(val_dataset, eval_transform)
         val_dataset = TransformDataset(val_dataset, model_transform)
 
@@ -262,6 +272,16 @@ class AircraftClassificationPipeline(pl.LightningModule):
                                        num_workers=self.config.train_workers,
                                        pin_memory=True)
 
+        self.train_subset_loader = DataLoader(train_subset_dataset,
+                                              batch_size=self.config.eval_batch,
+                                              num_workers=self.config.eval_workers,
+                                              pin_memory=True)
+
+        self.train_orig_loader = DataLoader(train_orig_dataset,
+                                            batch_size=self.config.eval_batch,
+                                            num_workers=self.config.eval_workers,
+                                            pin_memory=True)
+
         self.val_loader = DataLoader(val_dataset,
                                      batch_size=self.config.eval_batch,
                                      num_workers=self.config.eval_workers,
@@ -275,7 +295,7 @@ class AircraftClassificationPipeline(pl.LightningModule):
         #
         # Model adjustment
         #
-        target_probs = class_distribution(train_dataset_targets, self.num_classes)
+        target_probs = class_distribution(train_targets, self.num_classes)
         init_softmax_logits(self.model.fc.bias, torch.from_numpy(target_probs))
 
     def configure_optimizers(self):
@@ -305,28 +325,59 @@ class AircraftClassificationPipeline(pl.LightningModule):
     def train_dataloader(self) -> DataLoader:
         return self.train_loader
 
-    def validation_step(self, batch, batch_idx) -> Dict:
+    def validation_step(self, batch, batch_idx: int, dataloader_idx: int) -> Dict:
         x, y, _ = batch
 
         z = self.forward(x)
         y_probs = torch.exp(log_softmax(z, dim=1))
         y_hat = torch.argmax(y_probs, dim=1)
 
-        loss = self.eval_loss(z, y)
-        correct, total = self.eval_accuracy(y_hat, y)
-        return {'val_loss': loss, 'val_correct': correct, 'val_total': total}
+        if dataloader_idx == 0:     # val_loader
+            loss = self.eval_loss(z, y)
+            correct, total = self.eval_accuracy(y_hat, y)
+            prefix = 'val'
+        elif dataloader_idx == 1:   # train_subset_loader
+            loss = self.train_loss(z, y)
+            correct, total = self.train_accuracy(y_probs, y)
+            prefix = 'train_sub'
+        elif dataloader_idx == 2:   # train_orig_loader
+            loss = self.eval_loss(z, y)
+            correct, total = self.eval_accuracy(y_hat, y)
+            prefix = 'train_orig'
+        else:
+            raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
 
-    def validation_epoch_end(self, outputs) -> Dict:
-        val_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
+        return {
+            f'{prefix}_loss': loss,
+            f'{prefix}_correct': correct,
+            f'{prefix}_total': total
+        }
 
-        val_correct_sum = torch.stack([x['val_correct'] for x in outputs]).sum()
-        val_total_sum = torch.stack([x['val_total'] for x in outputs]).sum()
-        val_accuracy = val_correct_sum / float(val_total_sum)
+    def validation_epoch_end(self, outputs: List[Dict]) -> Dict:
+        progress_bar = {}
+        for dataloader_idx, output in enumerate(outputs):
+            if dataloader_idx == 0:  # val_loader
+                prefix = 'val'
+            elif dataloader_idx == 1:  # train_subset_loader
+                prefix = 'train_sub'
+            elif dataloader_idx == 2:  # train_orig_loader
+                prefix = 'train_orig'
+            else:
+                raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
 
-        return {'progress_bar': {'val_loss': val_loss, 'val_acc': val_accuracy}}
+            loss = torch.stack([x[f'{prefix}_loss'] for x in output]).mean()
 
-    def val_dataloader(self) -> DataLoader:
-        return self.val_loader
+            correct_sum = torch.stack([x[f'{prefix}_correct'] for x in output]).sum()
+            total_sum = torch.stack([x[f'{prefix}_total'] for x in output]).sum()
+            accuracy = correct_sum / float(total_sum)
+
+            progress_bar[f'{prefix}_loss'] = loss
+            progress_bar[f'{prefix}_acc'] = accuracy
+
+        return {'progress_bar': progress_bar}
+
+    def val_dataloader(self) -> List[DataLoader]:
+        return [self.val_loader, self.train_subset_loader, self.train_orig_loader]
 
     def test_step(self, batch, batch_idx) -> Dict:
         x, y, _ = batch
