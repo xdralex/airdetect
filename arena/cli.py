@@ -18,7 +18,7 @@ from torchsummary import summary
 from pipelines.aircraft_classification import AircraftClassificationConfig, AircraftClassificationPipeline
 from wheel5 import logutils
 from wheel5.introspection import introspect, make_dot
-from wheel5.tracking import Tracker, TrialTracker
+from wheel5.tracking import Tracker, TrialTracker, TensorboardEpochLogging
 
 from pipeline import PipelineFitConfig, fit_model, score_model_blend, PipelineTestConfig, make_sample_transform
 from util import launch_tensorboard, dump, snapshot_config, tensorboard_config, dataset_config
@@ -236,7 +236,11 @@ def cli_trial_lightning(experiment: str, device_name: str, repo: str, network: s
 
     pipeline = AircraftClassificationPipeline(config=pipeline_config, hparams=hparams)
     logger = TensorBoardLogger(save_dir=tensorboard_dir)
+    callbacks = [
+        TensorboardEpochLogging()
+    ]
     trainer = Trainer(logger=logger,
+                      callbacks=callbacks,
                       gpus=1,
                       max_epochs=max_epochs,
                       progress_bar_refresh_rate=1,

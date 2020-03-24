@@ -1,6 +1,6 @@
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Tuple
 
 import albumentations as albu
 import cv2
@@ -15,20 +15,21 @@ from torch import nn
 from torch.nn import Parameter, CrossEntropyLoss
 from torch.nn.functional import log_softmax
 from torch.optim.adamw import AdamW
+from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import Subset, DataLoader
 from torchvision import transforms
 
 import wheel5.transforms.albumentations as albu_ext
 import wheel5.transforms.torchvision as torchviz_ext
-from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, \
-    targets, LMDBImageDataset
+from wheel5.metering import ReservoirSamplingMeter
+from wheel5.tracking import ProbesInterface
+from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, targets, LMDBImageDataset
 from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.metrics import ExactMatchAccuracy, JaccardAccuracy
 from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
-
 
 Transform = Callable[[Img], Img]
 
@@ -57,6 +58,8 @@ class AircraftClassificationConfig:
     cutmix: bool
 
     print_model_transforms: bool = True
+    logging_sampling_full: bool = False
+    logging_samples: int = 8
 
     val_split: float = 0.2
     train_sample: float = 0.25
@@ -67,7 +70,12 @@ class AircraftClassificationConfig:
     eval_workers: int = 4
 
 
-class AircraftClassificationPipeline(pl.LightningModule):
+class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
+
+    @dataclass
+    class Sample:
+        x: torch.Tensor
+        y: torch.Tensor
 
     def __init__(self, config: AircraftClassificationConfig, hparams: Dict[str, float]):
         super(AircraftClassificationPipeline, self).__init__()
@@ -96,6 +104,9 @@ class AircraftClassificationPipeline(pl.LightningModule):
 
         self.eval_loss = CrossEntropyLoss()
         self.eval_accuracy = ExactMatchAccuracy()
+
+        self.epoch_samples: Dict[str, ReservoirSamplingMeter] = {}
+        self.sample_transform = None
 
     def adjust_model_params(self):
         param_groups = {
@@ -165,6 +176,8 @@ class AircraftClassificationPipeline(pl.LightningModule):
         #
         normalize_mean = [0.485, 0.456, 0.406]
         normalize_std = [0.229, 0.224, 0.225]
+
+        self.sample_transform = torchviz_ext.InvNormalize(mean=normalize_mean, std=normalize_std)
 
         mean_color = tuple([int(round(c * 255)) for c in normalize_mean])
 
@@ -312,6 +325,9 @@ class AircraftClassificationPipeline(pl.LightningModule):
 
         return [optimizer], [scheduler]
 
+    def on_epoch_start(self):
+        self.epoch_samples = {}
+
     def forward(self, x):
         return self.model(x)
 
@@ -321,6 +337,7 @@ class AircraftClassificationPipeline(pl.LightningModule):
         z = self.forward(x)
 
         loss = self.train_loss(z, y)
+        self.add_epoch_samples('train', batch_idx, x, y)
         return {'loss': loss}
 
     def train_dataloader(self) -> DataLoader:
@@ -333,20 +350,22 @@ class AircraftClassificationPipeline(pl.LightningModule):
         y_probs = torch.exp(log_softmax(z, dim=1))
         y_hat = torch.argmax(y_probs, dim=1)
 
-        if dataloader_idx == 0:     # val_loader
+        if dataloader_idx == 0:  # val_loader
             loss = self.eval_loss(z, y)
             correct, total = self.eval_accuracy(y_hat, y)
             prefix = 'val'
-        elif dataloader_idx == 1:   # train_subset_loader
+        elif dataloader_idx == 1:  # train_subset_loader
             loss = self.train_loss(z, y)
             correct, total = self.train_accuracy(y_probs, y)
             prefix = 'train_sub'
-        elif dataloader_idx == 2:   # train_orig_loader
+        elif dataloader_idx == 2:  # train_orig_loader
             loss = self.eval_loss(z, y)
             correct, total = self.eval_accuracy(y_hat, y)
             prefix = 'train_orig'
         else:
             raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
+
+        self.add_epoch_samples(prefix, batch_idx, x, y)
 
         return {
             f'{prefix}_loss': loss,
@@ -384,6 +403,27 @@ class AircraftClassificationPipeline(pl.LightningModule):
 
     def val_dataloader(self) -> List[DataLoader]:
         return [self.val_loader, self.train_subset_loader, self.train_orig_loader]
+
+    def add_epoch_samples(self, name: str, batch_idx: int, x: torch.Tensor, y: torch.Tensor):
+        if batch_idx == 0 or self.config.logging_sampling_full:
+            if name not in self.epoch_samples:
+                self.epoch_samples[name] = ReservoirSamplingMeter(k=self.config.logging_samples)
+
+            elements = []
+            for i in range(0, y.shape[0]):
+                sample = self.Sample(x=x[i], y=y[i])
+                elements.append(sample)
+            self.epoch_samples[name].add(elements)
+
+    def probe_optimizers(self) -> Dict[str, Tuple[Optimizer, List[str]]]:
+        optimizer = self.trainer.optimizers[0]
+        return {'main': (optimizer, self.group_names)}
+
+    def probe_image_samples(self) -> Dict[str, List[torch.Tensor]]:
+        def meter_to_tensors(meter: ReservoirSamplingMeter) -> List[torch.Tensor]:
+            return [self.sample_transform(sample.x) for sample in meter.value()]
+        
+        return {name: meter_to_tensors(meter) for name, meter in self.epoch_samples.items()}
 
     @staticmethod
     def load_dataset(config: DatasetConfig, target_classes: List[str], store_transform: Optional[Transform] = None) -> LMDBImageDataset:
