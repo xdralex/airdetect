@@ -1,11 +1,6 @@
-tracker:
-  snapshot:
-    root: /data/ssd/run/airliners/snapshots
-  tensorboard:
-    root: /data/ssd/run/airliners/tensorboard
-    track_weights: 1
-    track_samples: 1
-    track_predictions: 1
+tracking:
+  snapshot_root: /data/ssd/run/airliners/snapshots
+  tensorboard_root: /data/ssd/run/airliners/tensorboard
 
 
 datasets:

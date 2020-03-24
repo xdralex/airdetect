@@ -11,6 +11,7 @@ import torch
 import yaml
 from hyperopt import hp, fmin
 from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
 from torch import nn
 from torchsummary import summary
@@ -203,7 +204,12 @@ def cli_trial_lightning(experiment: str, device_name: str, repo: str, network: s
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
 
-    tensorboard_dir = '/data/ssd/run/airliners/tensorboard_check'
+    snapshot_root = config['tracking']['snapshot_root']
+    tensorboard_root = config['tracking']['tensorboard_root']
+
+    snapshot_dir = os.path.join(snapshot_root, experiment)
+    tensorboard_dir = os.path.join(tensorboard_root, experiment)
+
     launch_tensorboard(tensorboard_dir)
 
     hparams = {
@@ -218,6 +224,9 @@ def cli_trial_lightning(experiment: str, device_name: str, repo: str, network: s
         'cutmix_alpha': 0.9,
         'mixup_alpha': 0.3
     }
+
+    trial_key = Tracker.dict_to_key(hparams)
+    snapshot_trial = os.path.join(snapshot_dir, trial_key)
 
     pipeline_config = AircraftClassificationConfig(
         random_state_seed=42,
@@ -235,11 +244,18 @@ def cli_trial_lightning(experiment: str, device_name: str, repo: str, network: s
     )
 
     pipeline = AircraftClassificationPipeline(config=pipeline_config, hparams=hparams)
-    logger = TensorBoardLogger(save_dir=tensorboard_dir)
-    callbacks = [
-        TensorboardEpochLogging()
-    ]
+    logger = TensorBoardLogger(save_dir=tensorboard_root,
+                               name=experiment,
+                               version=trial_key)
+    checkpoint_callback = ModelCheckpoint(filepath=snapshot_trial + '/{epoch}-{val_acc:.5f}',
+                                          monitor='val_acc',
+                                          mode='max',
+                                          save_top_k=1)
+    early_stop_callback = False
+    callbacks = [TensorboardEpochLogging()]
     trainer = Trainer(logger=logger,
+                      checkpoint_callback=checkpoint_callback,
+                      early_stop_callback=early_stop_callback,
                       callbacks=callbacks,
                       gpus=1,
                       max_epochs=max_epochs,

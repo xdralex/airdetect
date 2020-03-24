@@ -1,6 +1,6 @@
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Callable, Tuple
+from typing import Dict, List, Optional, Callable
 
 import albumentations as albu
 import cv2
@@ -10,26 +10,26 @@ import pytorch_lightning as pl
 import torch
 from PIL import Image
 from PIL.Image import Image as Img
+from matplotlib.figure import Figure
 from numpy.random.mtrand import RandomState
 from torch import nn
 from torch.nn import Parameter, CrossEntropyLoss
 from torch.nn.functional import log_softmax
 from torch.optim.adamw import AdamW
-from torch.optim.optimizer import Optimizer
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import Subset, DataLoader
 from torchvision import transforms
 
 import wheel5.transforms.albumentations as albu_ext
 import wheel5.transforms.torchvision as torchviz_ext
-from wheel5.metering import ReservoirSamplingMeter
-from wheel5.tracking import ProbesInterface
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, targets, LMDBImageDataset
 from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
+from wheel5.metering import ReservoirSamplingMeter
 from wheel5.metrics import ExactMatchAccuracy, JaccardAccuracy
 from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
+from wheel5.tracking import ProbesInterface
 
 Transform = Callable[[Img], Img]
 
@@ -399,7 +399,15 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         log = {f'fit/{k}': v for k, v in metrics.items()}
         log['step'] = self.current_epoch
 
-        return {'progress_bar': progress_bar, 'log': log}
+        val_acc = metrics['val_acc']
+        val_loss = metrics['val_acc']
+
+        return {
+            'val_acc': val_acc,
+            'val_loss': val_loss,
+            'progress_bar': progress_bar,
+            'log': log
+        }
 
     def val_dataloader(self) -> List[DataLoader]:
         return [self.val_loader, self.train_subset_loader, self.train_orig_loader]
@@ -415,15 +423,55 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
                 elements.append(sample)
             self.epoch_samples[name].add(elements)
 
-    def probe_optimizers(self) -> Dict[str, Tuple[Optimizer, List[str]]]:
-        optimizer = self.trainer.optimizers[0]
-        return {'main': (optimizer, self.group_names)}
+    def probe_metrics(self) -> Dict[str, float]:
+        metrics: Dict[str, float] = {}
 
-    def probe_image_samples(self) -> Dict[str, List[torch.Tensor]]:
+        optimizer = self.trainer.optimizers[0]
+        assert len(self.group_names) == len(optimizer.param_groups)
+
+        for group_name, param_group in zip(self.group_names, optimizer.param_groups):
+            for k, v in param_group.items():
+                if k == 'lr':
+                    try:
+                        v = float(v)
+                    except (ValueError, TypeError):
+                        v = None
+
+                    if v is not None:
+                        metrics[f'optim/{group_name}/{k}'] = v
+
+        return metrics
+
+    def probe_histograms(self) -> Dict[str, torch.Tensor]:
+        return {'weights/{k}': v for k, v in self.named_parameters()}
+
+    def probe_images(self) -> Dict[str, List[torch.Tensor]]:
         def meter_to_tensors(meter: ReservoirSamplingMeter) -> List[torch.Tensor]:
             return [self.sample_transform(sample.x) for sample in meter.value()]
-        
-        return {name: meter_to_tensors(meter) for name, meter in self.epoch_samples.items()}
+
+        return {f'samples/{name}': meter_to_tensors(meter) for name, meter in self.epoch_samples.items()}
+
+    def probe_figures(self) -> Dict[str, Figure]:
+        #     if prediction is not None:
+        #         cm_fig = visualize_cm(classes, y_true=prediction['y'].numpy(), y_pred=prediction['y_hat'].numpy())
+        #         self.tb_writer.add_figure(f'predictions/cm', cm_fig, state.epoch)
+        #
+        #         pil_image_transform = ToPILImage()
+        #
+        #         def viz_transform(x):
+        #             return pil_image_transform(self.sample_img_transform(x))
+        #
+        #         mismatch_figs = visualize_top_errors(classes,
+        #                                              y_true=prediction['y'].numpy(),
+        #                                              y_pred=prediction['y_hat'].numpy(),
+        #                                              image_indices=prediction['indices'].numpy(),
+        #                                              image_dataset=TransformDataset(prediction_dataset, viz_transform))
+        return {}
+
+    def get_tqdm_dict(self):
+        d = dict(super(AircraftClassificationPipeline, self).get_tqdm_dict())
+        del d['v_num']
+        return d
 
     @staticmethod
     def load_dataset(config: DatasetConfig, target_classes: List[str], store_transform: Optional[Transform] = None) -> LMDBImageDataset:
