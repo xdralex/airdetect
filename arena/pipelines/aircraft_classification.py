@@ -55,7 +55,7 @@ def make_space_dict() -> Dict[str, Dict]:
             'lrB': hp.uniform('lrB', 2e-4, 4e-4),
             'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1)),
             'lr_t0': hp.choice('lr_t0', [10]),
-            'lr_f': hp.choice('lr_t0', [2.0]),
+            'lr_f': hp.choice('lr_f', [2.0]),
             'lr_warmup': hp.choice('lr_warmup', [3]),
             'lb_smooth': hp.loguniform('lb_smooth', math.log(1e-4), math.log(1)),
             'cutmix_alpha': hp.loguniform('cutmix_alpha', math.log(1e-2), math.log(1)),
@@ -67,9 +67,9 @@ def make_space_dict() -> Dict[str, Dict]:
             'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-2)),
             'wdB': hp.loguniform('wdB', math.log(1e-3), math.log(1e+1)),
             'lr_t0': hp.choice('lr_t0', [10]),
-            'lr_f': hp.choice('lr_t0', [2.0]),
+            'lr_f': hp.choice('lr_f', [2.0]),
             'lr_warmup': hp.choice('lr_warmup', [3]),
-            'lb_smooth': hp.loguniform('smooth', math.log(1e-5), math.log(1)),
+            'lb_smooth': hp.loguniform('lb_smooth', math.log(1e-5), math.log(1)),
             'cutmix_alpha': hp.loguniform('cutmix_alpha', math.log(1e-3), math.log(1e+1)),
             'mixup_alpha': hp.loguniform('mixup_alpha', math.log(1e-3), math.log(1e+1))
         }
@@ -735,7 +735,9 @@ def cli_search(experiment: str, device: int, repo: str, network: str,
 
         freeze=freeze,
         mixup=mixup,
-        cutmix=cutmix
+        cutmix=cutmix,
+
+        print_model_transforms=False
     )
 
     def run_trial_hparams(hparams: Dict[str, float]):
@@ -751,6 +753,6 @@ def cli_search(experiment: str, device: int, repo: str, network: str,
         return results['min_val_loss']
 
     space_dict = make_space_dict()
-    fmin(run_trial_hparams, space=space_dict[space], algo=hyperopt.rand.suggest, max_evals=trials)
+    fmin(run_trial_hparams, space=space_dict[space], algo=hyperopt.rand.suggest, max_evals=trials, verbose=False, show_progressbar=False)
 
     input("\nSearch completed, press Enter to exit (this will terminate TensorBoard)\n")
