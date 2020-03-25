@@ -1,17 +1,27 @@
+import math
+import os
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Callable
+from typing import Dict, Optional
+from typing import List, Callable
 
 import albumentations as albu
+import click
 import cv2
+import hyperopt
 import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
+import yaml
 from PIL import Image
 from PIL.Image import Image as Img
+from hyperopt import hp, fmin
 from matplotlib.figure import Figure
 from numpy.random.mtrand import RandomState
+from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.loggers import TensorBoardLogger
 from torch import nn
 from torch.nn import Parameter, CrossEntropyLoss
 from torch.nn.functional import log_softmax
@@ -22,6 +32,8 @@ from torchvision import transforms
 
 import wheel5.transforms.albumentations as albu_ext
 import wheel5.transforms.torchvision as torchviz_ext
+from util import launch_tensorboard, parse_hparams
+from wheel5 import logutils
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, targets, LMDBImageDataset
 from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
@@ -30,16 +42,38 @@ from wheel5.metrics import ExactMatchAccuracy, JaccardAccuracy
 from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
 from wheel5.tracking import ProbesInterface
+from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
 
 Transform = Callable[[Img], Img]
 
 
-@dataclass
-class DatasetConfig:
-    metadata: str
-    annotations: str
-    image_dir: str
-    lmdb_dir: str
+def make_space_dict() -> Dict[str, Dict]:
+    return {
+        'resnet50_narrow': {
+            'lrA': hp.uniform('lrA', 2e-4, 4e-4),
+            'wdA': hp.loguniform('wdA', math.log(1e-2), math.log(1)),
+            'lrB': hp.uniform('lrB', 2e-4, 4e-4),
+            'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1)),
+            'lr_t0': hp.choice('lr_t0', [10]),
+            'lr_f': hp.choice('lr_t0', [2.0]),
+            'lr_warmup': hp.choice('lr_warmup', [3]),
+            'lb_smooth': hp.loguniform('lb_smooth', math.log(1e-4), math.log(1)),
+            'cutmix_alpha': hp.loguniform('cutmix_alpha', math.log(1e-2), math.log(1)),
+            'mixup_alpha': hp.loguniform('mixup_alpha', math.log(1e-2), math.log(1))
+        },
+        'resnet50_wide': {
+            'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-2)),
+            'wdA': hp.loguniform('wdA', math.log(1e-3), math.log(1e+1)),
+            'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-2)),
+            'wdB': hp.loguniform('wdB', math.log(1e-3), math.log(1e+1)),
+            'lr_t0': hp.choice('lr_t0', [10]),
+            'lr_f': hp.choice('lr_t0', [2.0]),
+            'lr_warmup': hp.choice('lr_warmup', [3]),
+            'lb_smooth': hp.loguniform('smooth', math.log(1e-5), math.log(1)),
+            'cutmix_alpha': hp.loguniform('cutmix_alpha', math.log(1e-3), math.log(1e+1)),
+            'mixup_alpha': hp.loguniform('mixup_alpha', math.log(1e-3), math.log(1e+1))
+        }
+    }
 
 
 @dataclass
@@ -47,8 +81,7 @@ class AircraftClassificationConfig:
     random_state_seed: int
 
     classes_path: str
-    fit_dataset_config: DatasetConfig
-    test_dataset_config: DatasetConfig
+    dataset_config: Dict[str, str]
 
     repo: str
     network: str
@@ -91,7 +124,6 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         self.train_subset_loader = None
         self.train_orig_loader = None
         self.val_loader = None
-        self.test_loader = None
 
         self.model = torch.hub.load(self.config.repo, self.config.network, pretrained=True, verbose=False)
         self.model.fc = nn.Linear(in_features=self.model.fc.in_features, out_features=self.num_classes)
@@ -99,11 +131,13 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         self.group_names, self.optimizer_params = self.adjust_model_params()
 
         smooth_dist = torch.full([self.num_classes], fill_value=1.0 / self.num_classes)
-        self.train_loss = SoftLabelCrossEntropyLoss(smooth_factor=self.hparams['loss_smooth'], smooth_dist=smooth_dist)
+        self.train_loss = SoftLabelCrossEntropyLoss(smooth_factor=self.hparams['lb_smooth'], smooth_dist=smooth_dist)
         self.train_accuracy = JaccardAccuracy()
 
         self.eval_loss = CrossEntropyLoss()
         self.eval_accuracy = ExactMatchAccuracy()
+
+        self.epoch_fit_metrics = None
 
         self.epoch_samples: Dict[str, ReservoirSamplingMeter] = {}
         self.sample_transform = None
@@ -227,8 +261,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         #
         # Dataset loading
         #
-        fit_dataset = self.load_dataset(self.config.fit_dataset_config, self.target_classes, store_transform)
-        test_dataset = self.load_dataset(self.config.test_dataset_config, self.target_classes, store_transform)
+        fit_dataset = self.load_dataset(self.config.dataset_config, self.target_classes, store_transform)
 
         #
         # Split into train/val/ctrl
@@ -278,9 +311,6 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         val_dataset = AlbumentationsDataset(val_dataset, eval_transform)
         val_dataset = TransformDataset(val_dataset, model_transform)
 
-        test_dataset = AlbumentationsDataset(test_dataset, eval_transform)
-        test_dataset = TransformDataset(test_dataset, model_transform)
-
         #
         # Data loading
         #
@@ -304,11 +334,6 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
                                      num_workers=self.config.eval_workers,
                                      pin_memory=True)
 
-        self.test_loader = DataLoader(test_dataset,
-                                      batch_size=self.config.eval_batch,
-                                      num_workers=self.config.eval_workers,
-                                      pin_memory=True)
-
         #
         # Model adjustment
         #
@@ -319,13 +344,14 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         optimizer = AdamW(self.optimizer_params)
 
         scheduler = CosineAnnealingWarmRestarts(optimizer,
-                                                T_0=int(round(self.hparams['lr_cos_t0'])),
-                                                T_mult=int(round(self.hparams['lr_cos_f'])))
-        scheduler = WarmupScheduler(optimizer, epochs=self.hparams['lr_warmup_epochs'], next_scheduler=scheduler)
+                                                T_0=int(round(self.hparams['lr_t0'])),
+                                                T_mult=int(round(self.hparams['lr_f'])))
+        scheduler = WarmupScheduler(optimizer, epochs=self.hparams['lr_warmup'], next_scheduler=scheduler)
 
         return [optimizer], [scheduler]
 
     def on_epoch_start(self):
+        self.epoch_fit_metrics = None
         self.epoch_samples = {}
 
     def forward(self, x):
@@ -357,11 +383,11 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         elif dataloader_idx == 1:  # train_subset_loader
             loss = self.train_loss(z, y)
             correct, total = self.train_accuracy(y_probs, y)
-            prefix = 'train_sub'
+            prefix = 'train-aug'
         elif dataloader_idx == 2:  # train_orig_loader
             loss = self.eval_loss(z, y)
             correct, total = self.eval_accuracy(y_hat, y)
-            prefix = 'train_orig'
+            prefix = 'train'
         else:
             raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
 
@@ -379,9 +405,9 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
             if dataloader_idx == 0:  # val_loader
                 prefix = 'val'
             elif dataloader_idx == 1:  # train_subset_loader
-                prefix = 'train_sub'
+                prefix = 'train-aug'
             elif dataloader_idx == 2:  # train_orig_loader
-                prefix = 'train_orig'
+                prefix = 'train'
             else:
                 raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
 
@@ -394,10 +420,8 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
             metrics[f'{prefix}_loss'] = loss
             metrics[f'{prefix}_acc'] = accuracy
 
+        self.epoch_fit_metrics = metrics
         progress_bar = metrics
-
-        log = {f'fit/{k}': v for k, v in metrics.items()}
-        log['step'] = self.current_epoch
 
         val_acc = metrics['val_acc']
         val_loss = metrics['val_acc']
@@ -406,7 +430,6 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
             'val_acc': val_acc,
             'val_loss': val_loss,
             'progress_bar': progress_bar,
-            'log': log
         }
 
     def val_dataloader(self) -> List[DataLoader]:
@@ -423,7 +446,10 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
                 elements.append(sample)
             self.epoch_samples[name].add(elements)
 
-    def probe_metrics(self) -> Dict[str, float]:
+    def probe_epoch_fit_metrics(self) -> Dict[str, float]:
+        return {k: float(v) for k, v in self.epoch_fit_metrics.items()}
+
+    def probe_epoch_aux_metrics(self) -> Dict[str, float]:
         metrics: Dict[str, float] = {}
 
         optimizer = self.trainer.optimizers[0]
@@ -442,16 +468,16 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         return metrics
 
-    def probe_histograms(self) -> Dict[str, torch.Tensor]:
-        return {'weights/{k}': v for k, v in self.named_parameters()}
+    def probe_epoch_histograms(self) -> Dict[str, torch.Tensor]:
+        return {f'weights/{k}': v for k, v in self.named_parameters()}
 
-    def probe_images(self) -> Dict[str, List[torch.Tensor]]:
+    def probe_epoch_images(self) -> Dict[str, List[torch.Tensor]]:
         def meter_to_tensors(meter: ReservoirSamplingMeter) -> List[torch.Tensor]:
             return [self.sample_transform(sample.x) for sample in meter.value()]
 
         return {f'samples/{name}': meter_to_tensors(meter) for name, meter in self.epoch_samples.items()}
 
-    def probe_figures(self) -> Dict[str, Figure]:
+    def probe_epoch_figures(self) -> Dict[str, Figure]:
         #     if prediction is not None:
         #         cm_fig = visualize_cm(classes, y_true=prediction['y'].numpy(), y_pred=prediction['y_hat'].numpy())
         #         self.tb_writer.add_figure(f'predictions/cm', cm_fig, state.epoch)
@@ -474,9 +500,14 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         return d
 
     @staticmethod
-    def load_dataset(config: DatasetConfig, target_classes: List[str], store_transform: Optional[Transform] = None) -> LMDBImageDataset:
-        df_metadata = pd.read_csv(filepath_or_buffer=config.metadata, sep=',', header=0)
-        df_annotations = pd.read_csv(filepath_or_buffer=config.annotations, sep=',', header=0)
+    def load_dataset(config: Dict[str, str], target_classes: List[str], store_transform: Optional[Transform] = None) -> LMDBImageDataset:
+        metadata = config['metadata']
+        annotations = config['annotations']
+        image_dir = config['image_dir']
+        lmdb_dir = config['lmdb_dir']
+
+        df_metadata = pd.read_csv(filepath_or_buffer=metadata, sep=',', header=0)
+        df_annotations = pd.read_csv(filepath_or_buffer=annotations, sep=',', header=0)
 
         categories_dict = {}
         for row in df_annotations.itertuples():
@@ -491,8 +522,8 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         df_metadata = df_metadata.drop(columns=['name', 'category'])
 
         dataset = LMDBImageDataset.cached(df_metadata,
-                                          image_dir=config.image_dir,
-                                          lmdb_path=config.lmdb_dir,
+                                          image_dir=image_dir,
+                                          lmdb_path=lmdb_dir,
                                           transform=store_transform)
 
         return dataset
@@ -502,3 +533,234 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         with open(path, 'r') as f:
             lines = [line.strip() for line in f.readlines()]
             return [line for line in lines if line != '']
+
+    # def score_blend(device: Union[torch.device, int],
+    #                 models: List[Module],
+    #                 loader: DataLoader,
+    #                 eval_loss: Module,
+    #                 display_progress: bool = True) -> Dict[str, Union[int, float]]:
+    #     assert len(models) > 0
+    #
+    #     y = None
+    #     y_probs_list = []
+    #
+    #     for model in models:
+    #         model_device = model.to(device)
+    #
+    #         handler = PredictEpochHandler()
+    #         results = run_epoch(device, model_device, loader, None, None, None, handler, display_progress=display_progress)
+    #
+    #         order = torch.argsort(results.indices)
+    #         y_ordered = torch.index_select(results.y, dim=0, index=order)
+    #         y_probs_ordered = torch.index_select(results.y_probs, dim=0, index=order)
+    #
+    #         if y is None:
+    #             y = y_ordered
+    #         else:
+    #             assert bool(torch.eq(y, y_ordered).all())
+    #
+    #         y_probs_list.append(y_probs_ordered)
+    #
+    #         del model
+    #
+    #     y_probs_stack = torch.stack(y_probs_list, dim=0)
+    #     y_probs_blend = torch.mean(y_probs_stack, dim=0)
+    #
+    #     y_hat = torch.argmax(y_probs_blend, dim=1)
+    #     loss_value = float(eval_loss(y_probs_blend, y))
+    #
+    #     correct = float(torch.sum(y_hat == y))
+    #     total = float(y.shape[0])
+    #
+    #     acc = correct / total
+    #
+    #     return {'loss': loss_value, 'acc': acc}
+
+    # def score_model_blend(pipe_config: PipelineTestConfig,
+    #                       dataset_config: DatasetConfig,
+    #                       device: Union[torch.device, int],
+    #                       paths: List[Tuple[str, str]]):
+    #     #
+    #     # Initialization
+    #     #
+    #     target_classes = load_classes(dataset_config.classes_path)
+    #     test_loader = prepare_test_data(pipe_config, dataset_config, target_classes)
+    #
+    #     #
+    #     # Snapshot loading
+    #     #
+    #     models = []
+    #     eval_loss = None
+    #     for directory, snapshot in paths:
+    #         snapshot = Snapshotter.load_snapshot(directory, snapshot)
+    #         model = snapshot.model.cpu()
+    #
+    #         models.append(model)
+    #         eval_loss = snapshot.eval_loss
+    #
+    #         del snapshot
+    #
+    #     return score_blend(device, models, test_loader, eval_loss, display_progress=pipe_config.display_progress)
+
+
+def run_trial(tracker: Tracker, snapshot_dir: str, tensorboard_root: str, experiment: str, device: int,
+              config: AircraftClassificationConfig, max_epochs: int, hparams: Dict[str, float]) -> Dict[str, float]:
+    trial_tracker = tracker.new_trial(hparams)
+    snapshot_trial = os.path.join(snapshot_dir, trial_tracker.trial)
+
+    pipeline = AircraftClassificationPipeline(config=config, hparams=hparams)
+    logger = TensorBoardLogger(save_dir=tensorboard_root, name=experiment, version=trial_tracker.trial)
+
+    checkpoint_callback = ModelCheckpoint(filepath=CheckpointPattern.pattern(snapshot_trial), monitor='val_acc', mode='max', save_top_k=1)
+    early_stop_callback = False
+    tensorboard_callback = TensorboardLogging()
+    tracking_callback = StatisticsTracking(trial_tracker)
+
+    trainer = Trainer(logger=logger,
+                      checkpoint_callback=checkpoint_callback,
+                      early_stop_callback=early_stop_callback,
+                      callbacks=[tensorboard_callback, tracking_callback],
+                      gpus=[device],
+                      max_epochs=max_epochs,
+                      progress_bar_refresh_rate=1,
+                      num_sanity_val_steps=0)
+
+    trainer.fit(pipeline)
+
+    metrics_df = tracking_callback.metrics_df()
+
+    return {
+        'min_val_loss': metrics_df['val_loss'].min(),
+        'max_val_acc': metrics_df['val_acc'].max(),
+        'min_train_loss': metrics_df['train_loss'].min(),
+        'max_train_acc': metrics_df['train_acc'].max(),
+        'min_train-aug_loss': metrics_df['train-aug_loss'].min(),
+        'max_train-aug_acc': metrics_df['train-aug_acc'].max()
+    }
+
+
+@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
+@click.option('-d', '--device', 'device', default='0', help='device number (0, 1, ...)', type=int)
+@click.option('-r', '--repo', 'repo', default='pytorch/vision:v0.4.2', help='repository (e.g. pytorch/vision:v0.4.2)', type=str)
+@click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
+@click.option('--rnd-seed', 'rnd_seed', default=42, help='random seed', type=int)
+@click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
+@click.option('--freeze', 'freeze', default=-1, help='freeze first K layers', type=int)
+@click.option('--mixup', 'mixup', is_flag=True, help='apply mixup augmentation', type=bool)
+@click.option('--cutmix', 'cutmix', is_flag=True, help='apply cutmix augmentation', type=bool)
+@click.option('--hparams', 'hparams', default='', help='hyperparameters (k1=v1,k2=v2,...)', type=str)
+def cli_trial(experiment: str, device: int, repo: str, network: str,
+              rnd_seed: int, max_epochs: int, freeze: int, mixup: bool, cutmix: bool,
+              hparams: str):
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
+
+    snapshot_root = config['tracking']['snapshot_root']
+    tensorboard_root = config['tracking']['tensorboard_root']
+    tracker_root = config['tracking']['tracker_root']
+
+    snapshot_dir = os.path.join(snapshot_root, experiment)
+    tensorboard_dir = os.path.join(tensorboard_root, experiment)
+
+    tracker = Tracker(tracker_root, experiment)
+    launch_tensorboard(tensorboard_dir)
+
+    pipeline_config = AircraftClassificationConfig(
+        random_state_seed=rnd_seed,
+
+        classes_path=config['datasets']['classes'],
+        dataset_config=config['datasets']['train'],
+
+        repo=repo,
+        network=network,
+
+        freeze=freeze,
+        mixup=mixup,
+        cutmix=cutmix
+    )
+    hparams_dict = parse_hparams(hparams)
+
+    results = run_trial(tracker=tracker,
+                        snapshot_dir=snapshot_dir,
+                        tensorboard_root=tensorboard_root,
+                        experiment=experiment,
+                        device=device,
+                        config=pipeline_config,
+                        max_epochs=max_epochs,
+                        hparams=hparams_dict)
+
+    print()
+    for k, v in results.items():
+        print(f'{k} = {v:.5f}')
+
+    input("\nTrial completed, press Enter to exit (this will terminate TensorBoard)\n")
+
+
+@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
+@click.option('-d', '--device', 'device', default='0', help='device number (0, 1, ...)', type=int)
+@click.option('-r', '--repo', 'repo', default='pytorch/vision:v0.4.2', help='repository (e.g. pytorch/vision:v0.4.2)', type=str)
+@click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
+@click.option('--rnd-seed', 'rnd_seed', default=42, help='random seed', type=int)
+@click.option('--space', 'space', required=True, help='search space name', type=str)
+@click.option('--trials', 'trials', required=True, help='number of trials to perform', type=int)
+@click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
+@click.option('--freeze', 'freeze', default=-1, help='freeze first K layers', type=int)
+@click.option('--mixup', 'mixup', is_flag=True, help='apply mixup augmentation', type=bool)
+@click.option('--cutmix', 'cutmix', is_flag=True, help='apply cutmix augmentation', type=bool)
+def cli_search(experiment: str, device: int, repo: str, network: str,
+               rnd_seed: int, space: str, trials: int, max_epochs: int, freeze: int, mixup: bool, cutmix: bool):
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
+
+    snapshot_root = config['tracking']['snapshot_root']
+    tensorboard_root = config['tracking']['tensorboard_root']
+    tracker_root = config['tracking']['tracker_root']
+
+    snapshot_dir = os.path.join(snapshot_root, experiment)
+    tensorboard_dir = os.path.join(tensorboard_root, experiment)
+
+    tracker = Tracker(tracker_root, experiment)
+    launch_tensorboard(tensorboard_dir)
+
+    pipeline_config = AircraftClassificationConfig(
+        random_state_seed=rnd_seed,
+
+        classes_path=config['datasets']['classes'],
+        dataset_config=config['datasets']['train'],
+
+        repo=repo,
+        network=network,
+
+        freeze=freeze,
+        mixup=mixup,
+        cutmix=cutmix
+    )
+
+    def run_trial_hparams(hparams: Dict[str, float]):
+        results = run_trial(tracker=tracker,
+                            snapshot_dir=snapshot_dir,
+                            tensorboard_root=tensorboard_root,
+                            experiment=experiment,
+                            device=device,
+                            config=pipeline_config,
+                            max_epochs=max_epochs,
+                            hparams=hparams)
+
+        return results['min_val_loss']
+
+    snapshot_root = config['tracking']['snapshot_root']
+    tensorboard_root = config['tracking']['tensorboard_root']
+    tracker_root = config['tracking']['tracker_root']
+
+    snapshot_dir = os.path.join(snapshot_root, experiment)
+    tensorboard_dir = os.path.join(tensorboard_root, experiment)
+
+    tracker = Tracker(tracker_root, experiment)
+    launch_tensorboard(tensorboard_dir)
+
+    space_dict = make_space_dict()
+    fmin(run_trial_hparams, space=space_dict[space], algo=hyperopt.rand.suggest, max_evals=trials)
+
+    input("\nSearch completed, press Enter to exit (this will terminate TensorBoard)\n")

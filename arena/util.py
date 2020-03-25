@@ -1,12 +1,10 @@
 import logging
-from typing import Dict, List, Optional
+from typing import List, Optional, Dict, Tuple
 
 import pandas as pd
 from tabulate import tabulate
 from tensorboard import program
-
-from pipelines.aircraft_classification import DatasetConfig
-from wheel5.tracking import SnapshotConfig, TensorboardConfig, CheckpointSnapshotter, BestCVSnapshotter
+import click
 
 
 def launch_tensorboard(tensorboard_root: str, port: int = 6006):
@@ -19,35 +17,6 @@ def launch_tensorboard(tensorboard_root: str, port: int = 6006):
     logger.info(f'Launched TensorBoard at {url}')
 
 
-def snapshot_config(config: Dict) -> SnapshotConfig:
-    config = config['tracker']['snapshot']
-
-    snapshotters = [
-        CheckpointSnapshotter(frequency=20),
-        BestCVSnapshotter(metric_name='acc', asc=False, top=1),
-        BestCVSnapshotter(metric_name='loss', asc=True, top=1)
-    ]
-
-    return SnapshotConfig(root_dir=config['root'],
-                          snapshotters=snapshotters)
-
-
-def tensorboard_config(config: Dict) -> TensorboardConfig:
-    config = config['tracker']['tensorboard']
-
-    return TensorboardConfig(root_dir=config['root'],
-                             track_weights=bool(config['track_weights']),
-                             track_samples=bool(config['track_samples']),
-                             track_predictions=bool(config['track_predictions']))
-
-
-def dataset_config(config: Dict, name: str) -> DatasetConfig:
-    return DatasetConfig(metadata=config[name]['metadata'],
-                         annotations=config[name]['annotations'],
-                         image_dir=config[name]['image_dir'],
-                         lmdb_dir=config[name]['lmdb_dir'])
-
-
 def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[str]] = None) -> str:
     if drop_cols is None:
         drop_cols = []
@@ -57,3 +26,25 @@ def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[s
         df = df.head(top)
 
     return tabulate(df, headers="keys", showindex=False, tablefmt='github')
+
+
+def parse_hparams(hparams: str) -> Dict[str, float]:
+    def parse_hparam_entry(entry: str) -> Tuple[str, float]:
+        tokens = [token.strip() for token in entry.split('=') if token.strip() != '']
+        if len(tokens) != 2:
+            raise click.BadOptionUsage('hparams', f'Invalid hparams entry: "{entry}"')
+
+        k, v = tuple(tokens)
+        try:
+            return k, float(v)
+        except (ValueError, TypeError):
+            raise click.BadOptionUsage('hparams', f'Invalid hparams entry: "{entry}"')
+
+    hparams_entries = [entry.strip() for entry in hparams.split(',') if entry.strip() != '']
+    hparams_dict = {}
+
+    for entry in hparams_entries:
+        entry_k, entry_v = parse_hparam_entry(entry)
+        hparams_dict[entry_k] = entry_v
+
+    return hparams_dict

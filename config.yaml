@@ -1,7 +1,7 @@
 tracking:
   snapshot_root: /data/ssd/run/airliners/snapshots
   tensorboard_root: /data/ssd/run/airliners/tensorboard
-
+  tracker_root: /data/ssd/run/airliners/tracker
 
 datasets:
   train:
