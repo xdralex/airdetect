@@ -750,16 +750,6 @@ def cli_search(experiment: str, device: int, repo: str, network: str,
 
         return results['min_val_loss']
 
-    snapshot_root = config['tracking']['snapshot_root']
-    tensorboard_root = config['tracking']['tensorboard_root']
-    tracker_root = config['tracking']['tracker_root']
-
-    snapshot_dir = os.path.join(snapshot_root, experiment)
-    tensorboard_dir = os.path.join(tensorboard_root, experiment)
-
-    tracker = Tracker(tracker_root, experiment)
-    launch_tensorboard(tensorboard_dir)
-
     space_dict = make_space_dict()
     fmin(run_trial_hparams, space=space_dict[space], algo=hyperopt.rand.suggest, max_evals=trials)
 
