@@ -113,9 +113,7 @@ def cli_search(experiment: str, device: int, repo: str, network: str,
             mixup=mixup,
             cutmix=cutmix,
 
-            kv=kv,
-
-            print_model_transforms=False
+            kv=kv
         )
 
         results = fit_trial(tracker=tracker,

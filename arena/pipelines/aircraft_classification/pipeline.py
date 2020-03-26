@@ -27,6 +27,7 @@ from torch.optim.adamw import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import Subset, DataLoader, Dataset
 from torchvision import transforms
+from tqdm import tqdm
 
 import wheel5.transforms.albumentations as albu_ext
 import wheel5.transforms.torchvision as torchviz_ext
@@ -59,7 +60,6 @@ class AircraftClassificationConfig:
 
     kv: Dict[str, float]
 
-    print_model_transforms: bool = True
     logging_sampling_full: bool = False
     logging_samples: int = 8
 
@@ -182,9 +182,6 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         def freeze_params():
             for index, (name, child) in enumerate(self.model.named_children()):
                 if index < self.config.freeze:
-                    if self.config.print_model_transforms:
-                        print(f'Freezing layer {name}')
-
                     for param in child.parameters(recurse=True):
                         param.requires_grad = False
 
@@ -204,11 +201,6 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
                         group = 'A_no_decay' if param_name == 'bias' else 'A'
                         add_param(group, module_name, param_name, param)
 
-        def print_param_groups():
-            if self.config.print_model_transforms:
-                for group_name, group in param_groups.items():
-                    print(f'{group_name}: {group}')
-
         def prepare_params():
             group_names = []
             optimizer_params = []
@@ -224,8 +216,6 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         freeze_params()
         init_param_groups()
-        print_param_groups()
-
         return prepare_params()
 
     def prepare_data(self):
@@ -510,41 +500,66 @@ class TensorboardHparamsLogger(TensorBoardLogger):
         super(TensorboardHparamsLogger, self).log_hyperparams(config.kv)
 
 
-def eval_blend(dataset_config: Dict[str, str], device: int, snapshot_paths: List[str]) -> Dict[str, float]:
-    loader = None
+def eval_blend(dataset_config: Dict[str, str],
+               device: int,
+               snapshot_paths: List[str],
+               show_progress: bool = True) -> Dict[str, float]:
 
-    y_probs_list = []
-    for snapshot_path in snapshot_paths:
-        model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=torch.device(f'cuda:{device}'))
+    with torch.no_grad():
+        loader = None
 
-        if loader is None:
-            dataset = model.load_dataset(dataset_config)
-            loader = model.prepare_eval_loader(dataset)
+        y_only = None
+        y_probs_list = []
+        for i, snapshot_path in enumerate(snapshot_paths):
+            model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=torch.device(f'cuda:{device}'))
+            model.freeze()
 
-        z = torch.cat([model.forward(x) for x, _, _ in loader])
-        y_probs = torch.exp(log_softmax(z, dim=1))
+            if loader is None:
+                dataset = model.load_dataset(dataset_config)
+                loader = model.prepare_eval_loader(dataset)
 
-        y_probs_list.append(y_probs)
+            z_list = []
+            y_list = []
+            with tqdm(total=len(loader), disable=not show_progress) as progress_bar:
+                progress_bar.set_description(f'Evaluating model {i}')
 
-        del model
+                for x, y, _ in loader:
+                    z_list.append(model.forward(x))
+                    y_list.append(y)
 
-    y_probs_stack = torch.stack(y_probs_list, dim=0)
-    y_probs_blend = torch.mean(y_probs_stack, dim=0)
-    y_hat = torch.argmax(y_probs_blend, dim=1)
+                    progress_bar.update()
 
-    model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_paths[0], map_location=torch.device(f'cuda:{device}'))
-    y = torch.cat([y for _, y, _ in loader])
+            z = torch.cat(z_list)
+            y = torch.cat(y_list)
+            y_probs = torch.exp(log_softmax(z, dim=1))
 
-    correct, total = model.eval_accuracy(y_hat, y)
-    accuracy = float(correct) / float(total)
+            y_probs_list.append(y_probs)
+            if y_only is None:
+                y_only = y
+            del model
 
-    return {
-        'acc': accuracy
-    }
+        y_probs_stack = torch.stack(y_probs_list, dim=0)
+        y_probs_blend = torch.mean(y_probs_stack, dim=0)
+        y_hat = torch.argmax(y_probs_blend, dim=1)
+
+        model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_paths[0], map_location=torch.device(f'cuda:{device}'))
+
+        correct, total = model.eval_accuracy(y_hat, y_only)
+        accuracy = float(correct) / float(total)
+
+        return {
+            'acc': accuracy
+        }
 
 
-def fit_trial(tracker: Tracker, snapshot_dir: str, tensorboard_root: str, experiment: str, device: int,
-              config: AircraftClassificationConfig, max_epochs: int) -> Dict[str, float]:
+def fit_trial(tracker: Tracker,
+              snapshot_dir: str,
+              tensorboard_root: str,
+              experiment: str,
+              device: int,
+              config: AircraftClassificationConfig,
+              max_epochs: int) -> Dict[str, float]:
+
     trial_tracker = tracker.new_trial(config.kv)
     snapshot_trial = os.path.join(snapshot_dir, trial_tracker.trial)
 
