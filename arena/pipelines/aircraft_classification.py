@@ -1,8 +1,8 @@
 import math
 import os
 from collections import OrderedDict
-from dataclasses import dataclass
-from typing import Dict, Optional
+from dataclasses import dataclass, asdict
+from typing import Dict, Optional, Union
 from typing import List, Callable
 
 import albumentations as albu
@@ -16,12 +16,15 @@ import torch
 import yaml
 from PIL import Image
 from PIL.Image import Image as Img
+from dacite import from_dict
 from hyperopt import hp, fmin
 from matplotlib.figure import Figure
 from numpy.random.mtrand import RandomState
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
+# noinspection PyProtectedMember
+from pytorch_lightning.loggers import rank_zero_only
 from torch import nn
 from torch.nn import Parameter, CrossEntropyLoss
 from torch.nn.functional import log_softmax
@@ -32,7 +35,7 @@ from torchvision import transforms
 
 import wheel5.transforms.albumentations as albu_ext
 import wheel5.transforms.torchvision as torchviz_ext
-from util import launch_tensorboard, parse_hparams
+from util import launch_tensorboard, parse_kv, dump
 from wheel5 import logutils
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, targets, LMDBImageDataset
 from wheel5.dataset.functional import class_distribution
@@ -47,32 +50,32 @@ from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, Che
 Transform = Callable[[Img], Img]
 
 
-def make_space_dict() -> Dict[str, Dict]:
+def make_space_dict() -> Dict[str, OrderedDict]:
     return {
-        'resnet50_narrow': {
-            'lrA': hp.uniform('lrA', 2e-4, 4e-4),
-            'wdA': hp.loguniform('wdA', math.log(1e-2), math.log(1)),
-            'lrB': hp.uniform('lrB', 2e-4, 4e-4),
-            'wdB': hp.loguniform('wdB', math.log(1e-2), math.log(1)),
-            'lr_t0': hp.choice('lr_t0', [10]),
-            'lr_f': hp.choice('lr_f', [2.0]),
-            'lr_warmup': hp.choice('lr_warmup', [3]),
-            'lb_smooth': hp.loguniform('lb_smooth', math.log(1e-4), math.log(1)),
-            'cutmix_alpha': hp.loguniform('cutmix_alpha', math.log(1e-2), math.log(1)),
-            'mixup_alpha': hp.loguniform('mixup_alpha', math.log(1e-2), math.log(1))
-        },
-        'resnet50_wide': {
-            'lrA': hp.loguniform('lrA', math.log(1e-4), math.log(1e-2)),
-            'wdA': hp.loguniform('wdA', math.log(1e-3), math.log(1e+1)),
-            'lrB': hp.loguniform('lrB', math.log(1e-4), math.log(1e-2)),
-            'wdB': hp.loguniform('wdB', math.log(1e-3), math.log(1e+1)),
-            'lr_t0': hp.choice('lr_t0', [10]),
-            'lr_f': hp.choice('lr_f', [2.0]),
-            'lr_warmup': hp.choice('lr_warmup', [3]),
-            'lb_smooth': hp.loguniform('lb_smooth', math.log(1e-5), math.log(1)),
-            'cutmix_alpha': hp.loguniform('cutmix_alpha', math.log(1e-3), math.log(1e+1)),
-            'mixup_alpha': hp.loguniform('mixup_alpha', math.log(1e-3), math.log(1e+1))
-        }
+        'resnet50_narrow': OrderedDict([
+            ('lrA', hp.uniform('lrA', 2e-4, 4e-4)),
+            ('wdA', hp.loguniform('wdA', math.log(1e-2), math.log(1))),
+            ('lrB', hp.uniform('lrB', 2e-4, 4e-4)),
+            ('wdB', hp.loguniform('wdB', math.log(1e-2), math.log(1))),
+            ('lr_t0', hp.choice('lr_t0', [10])),
+            ('lr_f', hp.choice('lr_f', [2.0])),
+            ('lr_warmup', hp.choice('lr_warmup', [3])),
+            ('lb_smooth', hp.loguniform('lb_smooth', math.log(1e-4), math.log(1))),
+            ('cutmix_alpha', hp.loguniform('cutmix_alpha', math.log(1e-2), math.log(1))),
+            ('mixup_alpha', hp.loguniform('mixup_alpha', math.log(1e-2), math.log(1)))
+        ]),
+        'resnet50_wide': OrderedDict([
+            ('lrA', hp.loguniform('lrA', math.log(1e-4), math.log(1e-2))),
+            ('wdA', hp.loguniform('wdA', math.log(1e-3), math.log(1e+1))),
+            ('lrB', hp.loguniform('lrB', math.log(1e-4), math.log(1e-2))),
+            ('wdB', hp.loguniform('wdB', math.log(1e-3), math.log(1e+1))),
+            ('lr_t0', hp.choice('lr_t0', [10])),
+            ('lr_f', hp.choice('lr_f', [2.0])),
+            ('lr_warmup', hp.choice('lr_warmup', [3])),
+            ('lb_smooth', hp.loguniform('lb_smooth', math.log(1e-5), math.log(1))),
+            ('cutmix_alpha', hp.loguniform('cutmix_alpha', math.log(1e-3), math.log(1e+1))),
+            ('mixup_alpha', hp.loguniform('mixup_alpha', math.log(1e-3), math.log(1e+1)))
+        ])
     }
 
 
@@ -89,6 +92,8 @@ class AircraftClassificationConfig:
     freeze: int
     mixup: bool
     cutmix: bool
+
+    kv: Dict[str, float]
 
     print_model_transforms: bool = True
     logging_sampling_full: bool = False
@@ -110,14 +115,15 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         x: torch.Tensor
         y: torch.Tensor
 
-    def __init__(self, config: AircraftClassificationConfig, hparams: Dict[str, float]):
+    def __init__(self, hparams: Dict):
         super(AircraftClassificationPipeline, self).__init__()
 
-        self.config = config
         self.hparams = hparams
-        self.random_state = RandomState(config.random_state_seed)
+        self.config = from_dict(AircraftClassificationConfig, hparams)
 
-        self.target_classes = self.load_classes(config.classes_path)
+        self.random_state = RandomState(self.config.random_state_seed)
+
+        self.target_classes = self.load_classes(self.config.classes_path)
         self.num_classes = len(self.target_classes)
 
         self.train_loader = None
@@ -131,7 +137,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         self.group_names, self.optimizer_params = self.adjust_model_params()
 
         smooth_dist = torch.full([self.num_classes], fill_value=1.0 / self.num_classes)
-        self.train_loss = SoftLabelCrossEntropyLoss(smooth_factor=self.hparams['lb_smooth'], smooth_dist=smooth_dist)
+        self.train_loss = SoftLabelCrossEntropyLoss(smooth_factor=self.config.kv['lb_smooth'], smooth_dist=smooth_dist)
         self.train_accuracy = JaccardAccuracy()
 
         self.eval_loss = CrossEntropyLoss()
@@ -144,10 +150,10 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
     def adjust_model_params(self):
         param_groups = {
-            'A': ParamGroup({'lr': self.hparams['lrA'], 'weight_decay': self.hparams['wdA']}),
-            'A_no_decay': ParamGroup({'lr': self.hparams['lrA'], 'weight_decay': 0}),
-            'B': ParamGroup({'lr': self.hparams['lrB'], 'weight_decay': self.hparams['wdB']}),
-            'B_no_decay': ParamGroup({'lr': self.hparams['lrB'], 'weight_decay': 0})
+            'A': ParamGroup({'lr': self.config.kv['lrA'], 'weight_decay': self.config.kv['wdA']}),
+            'A_no_decay': ParamGroup({'lr': self.config.kv['lrA'], 'weight_decay': 0}),
+            'B': ParamGroup({'lr': self.config.kv['lrB'], 'weight_decay': self.config.kv['wdB']}),
+            'B_no_decay': ParamGroup({'lr': self.config.kv['lrB'], 'weight_decay': 0})
         }
 
         def add_param(group_name: str, module_name: str, param_name: str, param: Parameter):
@@ -288,12 +294,12 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         train_dataset = AlbumentationsDataset(train_dataset, train_transform_pre_cutmix)
         if self.config.cutmix:
-            cutmix_alpha = self.hparams['cutmix_alpha']
+            cutmix_alpha = self.config.kv['cutmix_alpha']
             train_dataset = ImageCutMixDataset(train_dataset, alpha=cutmix_alpha, random_state=self.random_state)
 
         train_dataset = AlbumentationsDataset(train_dataset, train_transform_pre_mixup)
         if self.config.mixup:
-            mixup_alpha = self.hparams['mixup_alpha']
+            mixup_alpha = self.config.kv['mixup_alpha']
             train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, random_state=self.random_state)
 
         train_dataset = AlbumentationsDataset(train_dataset, train_transform_final)
@@ -344,9 +350,9 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         optimizer = AdamW(self.optimizer_params)
 
         scheduler = CosineAnnealingWarmRestarts(optimizer,
-                                                T_0=int(round(self.hparams['lr_t0'])),
-                                                T_mult=int(round(self.hparams['lr_f'])))
-        scheduler = WarmupScheduler(optimizer, epochs=self.hparams['lr_warmup'], next_scheduler=scheduler)
+                                                T_0=int(round(self.config.kv['lr_t0'])),
+                                                T_mult=int(round(self.config.kv['lr_f'])))
+        scheduler = WarmupScheduler(optimizer, epochs=self.config.kv['lr_warmup'], next_scheduler=scheduler)
 
         return [optimizer], [scheduler]
 
@@ -603,13 +609,23 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
     #     return score_blend(device, models, test_loader, eval_loss, display_progress=pipe_config.display_progress)
 
 
+class TensorboardHparamsLogger(TensorBoardLogger):
+    def __init__(self, save_dir: str, name: Optional[str] = "default", version: Optional[Union[int, str]] = None, **kwargs):
+        super(TensorboardHparamsLogger, self).__init__(save_dir, name, version, **kwargs)
+
+    @rank_zero_only
+    def log_hyperparams(self, params: Dict) -> None:
+        config = from_dict(AircraftClassificationConfig, params)
+        super(TensorboardHparamsLogger, self).log_hyperparams(config.kv)
+
+
 def run_trial(tracker: Tracker, snapshot_dir: str, tensorboard_root: str, experiment: str, device: int,
-              config: AircraftClassificationConfig, max_epochs: int, hparams: Dict[str, float]) -> Dict[str, float]:
-    trial_tracker = tracker.new_trial(hparams)
+              config: AircraftClassificationConfig, max_epochs: int) -> Dict[str, float]:
+    trial_tracker = tracker.new_trial(config.kv)
     snapshot_trial = os.path.join(snapshot_dir, trial_tracker.trial)
 
-    pipeline = AircraftClassificationPipeline(config=config, hparams=hparams)
-    logger = TensorBoardLogger(save_dir=tensorboard_root, name=experiment, version=trial_tracker.trial)
+    pipeline = AircraftClassificationPipeline(hparams=asdict(config))
+    logger = TensorboardHparamsLogger(save_dir=tensorboard_root, name=experiment, version=trial_tracker.trial)
 
     checkpoint_callback = ModelCheckpoint(filepath=CheckpointPattern.pattern(snapshot_trial), monitor='val_acc', mode='max', save_top_k=1)
     early_stop_callback = False
@@ -648,10 +664,10 @@ def run_trial(tracker: Tracker, snapshot_dir: str, tensorboard_root: str, experi
 @click.option('--freeze', 'freeze', default=-1, help='freeze first K layers', type=int)
 @click.option('--mixup', 'mixup', is_flag=True, help='apply mixup augmentation', type=bool)
 @click.option('--cutmix', 'cutmix', is_flag=True, help='apply cutmix augmentation', type=bool)
-@click.option('--hparams', 'hparams', default='', help='hyperparameters (k1=v1,k2=v2,...)', type=str)
+@click.option('--kv', 'kv', default='', help='key-value parameters (k1=v1,k2=v2,...)', type=str)
 def cli_trial(experiment: str, device: int, repo: str, network: str,
               rnd_seed: int, max_epochs: int, freeze: int, mixup: bool, cutmix: bool,
-              hparams: str):
+              kv: str):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
@@ -677,9 +693,10 @@ def cli_trial(experiment: str, device: int, repo: str, network: str,
 
         freeze=freeze,
         mixup=mixup,
-        cutmix=cutmix
+        cutmix=cutmix,
+
+        kv=parse_kv(kv)
     )
-    hparams_dict = parse_hparams(hparams)
 
     results = run_trial(tracker=tracker,
                         snapshot_dir=snapshot_dir,
@@ -687,8 +704,7 @@ def cli_trial(experiment: str, device: int, repo: str, network: str,
                         experiment=experiment,
                         device=device,
                         config=pipeline_config,
-                        max_epochs=max_epochs,
-                        hparams=hparams_dict)
+                        max_epochs=max_epochs)
 
     print()
     for k, v in results.items():
@@ -724,35 +740,72 @@ def cli_search(experiment: str, device: int, repo: str, network: str,
     tracker = Tracker(tracker_root, experiment)
     launch_tensorboard(tensorboard_dir)
 
-    pipeline_config = AircraftClassificationConfig(
-        random_state_seed=rnd_seed,
+    def run_trial_wrapper(kv: Dict[str, float]):
+        pipeline_config = AircraftClassificationConfig(
+            random_state_seed=rnd_seed,
 
-        classes_path=config['datasets']['classes'],
-        dataset_config=config['datasets']['train'],
+            classes_path=config['datasets']['classes'],
+            dataset_config=config['datasets']['train'],
 
-        repo=repo,
-        network=network,
+            repo=repo,
+            network=network,
 
-        freeze=freeze,
-        mixup=mixup,
-        cutmix=cutmix,
+            freeze=freeze,
+            mixup=mixup,
+            cutmix=cutmix,
 
-        print_model_transforms=False
-    )
+            kv=kv,
 
-    def run_trial_hparams(hparams: Dict[str, float]):
+            print_model_transforms=False
+        )
+
         results = run_trial(tracker=tracker,
                             snapshot_dir=snapshot_dir,
                             tensorboard_root=tensorboard_root,
                             experiment=experiment,
                             device=device,
                             config=pipeline_config,
-                            max_epochs=max_epochs,
-                            hparams=hparams)
+                            max_epochs=max_epochs)
 
         return results['min_val_loss']
 
     space_dict = make_space_dict()
-    fmin(run_trial_hparams, space=space_dict[space], algo=hyperopt.rand.suggest, max_evals=trials, verbose=False, show_progressbar=False)
+    fmin(run_trial_wrapper, space=space_dict[space], algo=hyperopt.rand.suggest, max_evals=trials, verbose=False, show_progressbar=False)
 
     input("\nSearch completed, press Enter to exit (this will terminate TensorBoard)\n")
+
+
+@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
+@click.option('-d', '--device', 'device', default='0', help='device number (0, 1, ...)', type=int)
+@click.option('--top', 'top', default=1, help='number of top models to use', type=int)
+@click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
+@click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
+@click.option('--test', 'test', default='public', type=click.Choice(['public', 'private']), help='public/private test dataset')
+@click.option('--hide', 'hide', default='experiment,trial', type=str, help='columns to hide')
+@click.option('--incomplete', 'incomplete', is_flag=True, help='load incomplete trials')
+def cli_eval(experiment: str, device: str, top: int, metric_name: str, order: str, test: str, hide: str, incomplete: bool):
+    def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
+        return df.sort_values(by=metric_name, ascending=(order == 'asc'))
+
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+
+    snapshot_root = config['tracking']['snapshot_root']
+    tracker_root = config['tracking']['tracker_root']
+
+    df_res = Tracker.load_trial_stats(tracker_root, experiment, complete_only=not incomplete)
+
+    if df_res is None:
+        print('No completed trials found')
+    else:
+        drop_cols = [col.strip() for col in hide.split(',') if col.strip() != '']
+        df_best = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
+        print(f'Evaluating top models on the >>{test}<< test dataset: \n\n{dump(df_best, top=top, drop_cols=drop_cols)}\n\n\n')
+
+        snapshot_dir = os.path.join(snapshot_root, experiment)
+        for entry in df_best.itertuples():
+            snapshot_trial = os.path.join(snapshot_dir, entry.trial)
+            snapshot_path = CheckpointPattern.path(snapshot_trial, entry.epoch)
+
+            model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=torch.device(f'cuda:{device}'))
+            print(model)

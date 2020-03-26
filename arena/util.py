@@ -1,4 +1,5 @@
 import logging
+from collections import OrderedDict
 from typing import List, Optional, Dict, Tuple
 
 import pandas as pd
@@ -28,23 +29,23 @@ def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[s
     return tabulate(df, headers="keys", showindex=False, tablefmt='github')
 
 
-def parse_hparams(hparams: str) -> Dict[str, float]:
-    def parse_hparam_entry(entry: str) -> Tuple[str, float]:
+def parse_kv(kv: str) -> Dict[str, float]:
+    def parse_kv_entry(entry: str) -> Tuple[str, float]:
         tokens = [token.strip() for token in entry.split('=') if token.strip() != '']
         if len(tokens) != 2:
-            raise click.BadOptionUsage('hparams', f'Invalid hparams entry: "{entry}"')
+            raise click.BadOptionUsage('kv', f'Invalid key-value entry: "{entry}"')
 
         k, v = tuple(tokens)
         try:
             return k, float(v)
         except (ValueError, TypeError):
-            raise click.BadOptionUsage('hparams', f'Invalid hparams entry: "{entry}"')
+            raise click.BadOptionUsage('kv', f'Invalid key-value entry: "{entry}"')
 
-    hparams_entries = [entry.strip() for entry in hparams.split(',') if entry.strip() != '']
-    hparams_dict = {}
+    kv_entries = [entry.strip() for entry in kv.split(',') if entry.strip() != '']
+    kv_dict = OrderedDict()
 
-    for entry in hparams_entries:
-        entry_k, entry_v = parse_hparam_entry(entry)
-        hparams_dict[entry_k] = entry_v
+    for entry in kv_entries:
+        entry_k, entry_v = parse_kv_entry(entry)
+        kv_dict[entry_k] = entry_v
 
-    return hparams_dict
+    return kv_dict
