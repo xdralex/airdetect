@@ -86,21 +86,20 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         self.random_state = RandomState(self.config.random_state_seed)
 
-        self.target_classes = self._load_classes(self.config.classes_path)
-        self.num_classes = len(self.target_classes)
-
-        self.train_loader = None
-        self.train_subset_loader = None
-        self.train_orig_loader = None
-        self.val_loader = None
-
+        #
+        # Statistics
+        #
         self.epoch_fit_metrics = None
         self.epoch_samples: Dict[str, ReservoirSamplingMeter] = {}
-        self.sample_transform = None
+
+        self.training_outputs = []
 
         #
         # Model
         #
+        self.target_classes = self._load_classes(self.config.classes_path)
+        self.num_classes = len(self.target_classes)
+
         self.model = torch.hub.load(self.config.repo, self.config.network, pretrained=True, verbose=False)
         self.model.fc = nn.Linear(in_features=self.model.fc.in_features, out_features=self.num_classes)
         self.group_names, self.optimizer_params = self.adjust_model_params()
@@ -165,6 +164,14 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         ])
 
         self.sample_transform = torchviz_ext.InvNormalize(mean=normalize_mean, std=normalize_std)
+
+        #
+        # DataLoaders
+        #
+        self.train_loader = None
+        self.train_subset_loader = None
+        self.train_orig_loader = None
+        self.val_loader = None
 
     def adjust_model_params(self):
         param_groups = {
@@ -306,8 +313,9 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         return [optimizer], [scheduler]
 
     def on_epoch_start(self):
-        self.epoch_fit_metrics = None
+        self.epoch_fit_metrics = {}
         self.epoch_samples = {}
+        self.training_outputs = []
 
     def forward(self, x):
         return self.model(x)
@@ -316,8 +324,18 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         x, y, _ = batch
 
         z = self.forward(x)
+        y_probs_hat = torch.exp(log_softmax(z, dim=1))
 
         loss = self.train_loss(z, y)
+        correct, total = self.train_accuracy(y_probs_hat, y)
+
+        output = {
+            f'train_loss': loss,
+            f'train_correct': correct,
+            f'train_total': total
+        }
+        self.training_outputs.append(output)
+
         self.add_epoch_samples('train', batch_idx, x, y)
         return {'loss': loss}
 
@@ -325,20 +343,20 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         x, y, _ = batch
 
         z = self.forward(x)
-        y_probs = torch.exp(log_softmax(z, dim=1))
-        y_hat = torch.argmax(y_probs, dim=1)
+        y_probs_hat = torch.exp(log_softmax(z, dim=1))
+        y_class_hat = torch.argmax(y_probs_hat, dim=1)
 
         if dataloader_idx == 0:  # val_loader
             loss = self.eval_loss(z, y)
-            correct, total = self.eval_accuracy(y_hat, y)
+            correct, total = self.eval_accuracy(y_class_hat, y)
             prefix = 'val'
         elif dataloader_idx == 1:  # train_subset_loader
             loss = self.train_loss(z, y)
-            correct, total = self.train_accuracy(y_probs, y)
+            correct, total = self.train_accuracy(y_probs_hat, y)
             prefix = 'train-aug'
         elif dataloader_idx == 2:  # train_orig_loader
             loss = self.eval_loss(z, y)
-            correct, total = self.eval_accuracy(y_hat, y)
+            correct, total = self.eval_accuracy(y_class_hat, y)
             prefix = 'train-orig'
         else:
             raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
@@ -353,6 +371,10 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
     def validation_epoch_end(self, outputs: List[Dict]) -> Dict:
         metrics = OrderedDict()
+
+        outputs_by_prefix = OrderedDict()
+        outputs_by_prefix['train'] = self.training_outputs
+
         for dataloader_idx, output in enumerate(outputs):
             if dataloader_idx == 0:  # val_loader
                 prefix = 'val'
@@ -363,6 +385,9 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
             else:
                 raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
 
+            outputs_by_prefix[prefix] = output
+
+        for prefix, output in outputs_by_prefix.items():
             loss = torch.stack([x[f'{prefix}_loss'] for x in output]).mean()
 
             correct_sum = torch.stack([x[f'{prefix}_correct'] for x in output]).sum()
@@ -509,7 +534,7 @@ def eval_blend(dataset_config: Dict[str, str],
         loader = None
 
         y_only = None
-        y_probs_list = []
+        y_probs_hat_list = []
         for i, snapshot_path in enumerate(snapshot_paths):
             model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=torch.device(f'cuda:{device}'))
             model.freeze()
@@ -531,20 +556,20 @@ def eval_blend(dataset_config: Dict[str, str],
 
             z = torch.cat(z_list)
             y = torch.cat(y_list)
-            y_probs = torch.exp(log_softmax(z, dim=1))
+            y_probs_hat = torch.exp(log_softmax(z, dim=1))
 
-            y_probs_list.append(y_probs)
+            y_probs_hat_list.append(y_probs_hat)
             if y_only is None:
                 y_only = y
             del model
 
-        y_probs_stack = torch.stack(y_probs_list, dim=0)
-        y_probs_blend = torch.mean(y_probs_stack, dim=0)
-        y_hat = torch.argmax(y_probs_blend, dim=1)
+        y_probs_hat_stack = torch.stack(y_probs_hat_list, dim=0)
+        y_probs_hat_blend = torch.mean(y_probs_hat_stack, dim=0)
+        y_class_hat = torch.argmax(y_probs_hat_blend, dim=1)
 
         model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_paths[0], map_location=torch.device(f'cuda:{device}'))
 
-        correct, total = model.eval_accuracy(y_hat, y_only)
+        correct, total = model.eval_accuracy(y_class_hat, y_only)
         accuracy = float(correct) / float(total)
 
         return {
@@ -587,6 +612,8 @@ def fit_trial(tracker: Tracker,
     return {
         'min_val_loss': metrics_df['val_loss'].min(),
         'max_val_acc': metrics_df['val_acc'].max(),
+        'min_train_loss': metrics_df['train_loss'].min(),
+        'max_train_acc': metrics_df['train_acc'].max(),
         'min_train-orig_loss': metrics_df['train-orig_loss'].min(),
         'max_train-orig_acc': metrics_df['train-orig_acc'].max(),
         'min_train-aug_loss': metrics_df['train-aug_loss'].min(),
