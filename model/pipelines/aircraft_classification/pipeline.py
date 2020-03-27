@@ -587,8 +587,8 @@ def fit_trial(tracker: Tracker,
     return {
         'min_val_loss': metrics_df['val_loss'].min(),
         'max_val_acc': metrics_df['val_acc'].max(),
-        'min_train_loss': metrics_df['train_loss'].min(),
-        'max_train_acc': metrics_df['train_acc'].max(),
+        'min_train-orig_loss': metrics_df['train-orig_loss'].min(),
+        'max_train-orig_acc': metrics_df['train-orig_acc'].max(),
         'min_train-aug_loss': metrics_df['train-aug_loss'].min(),
         'max_train-aug_acc': metrics_df['train-aug_acc'].max()
     }

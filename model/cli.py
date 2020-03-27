@@ -12,9 +12,10 @@ from torchsummary import summary
 from pipelines.aircraft_classification import cli_search as cls_search
 from pipelines.aircraft_classification import cli_trial as cls_trial
 from pipelines.aircraft_classification import cli_eval as cls_eval
-from util import dump
+from util import dump, launch_tensorboard
 from wheel5.introspection import introspect, make_dot
 from wheel5.tracking import Tracker, TrialTracker
+from wheel5 import logutils
 
 
 @click.command(name='introspect-nn')
@@ -133,6 +134,21 @@ def cli_dump_trial(experiment: str, trial: str, hide: str, incomplete: bool):
         print(f'Results: \n\n{dump(df_res, drop_cols=drop_cols)}\n\n\n')
 
 
+@click.command(name='tensorboard')
+@click.option('-e', '--experiment', 'experiment', required=True, type=str, help='experiment name')
+def cli_tensorboard(experiment: str):
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
+
+    tensorboard_root = config['tracking']['tensorboard_root']
+    tensorboard_dir = os.path.join(tensorboard_root, experiment)
+
+    launch_tensorboard(tensorboard_dir)
+
+    input("\nPress Enter to exit (this will terminate TensorBoard)\n")
+
+
 @click.group()
 def cli():
     pass
@@ -148,5 +164,7 @@ if __name__ == "__main__":
     cli.add_command(cli_list_experiments)
     cli.add_command(cli_list_trials)
     cli.add_command(cli_dump_trial)
+
+    cli.add_command(cli_tensorboard)
 
     cli()
