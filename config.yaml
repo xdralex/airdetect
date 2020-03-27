@@ -61,21 +61,6 @@ logging:
       maxBytes: 134217728
       backupCount: 8
 
-    arena_out_handler:
-      class: wheel5.logutils.BetterFileHandler
-      formatter: file_formatter
-      level: INFO
-      filename: /data/ssd/run/airdetect/logs/arena.out
-      mode: w
-
-    arena_log_handler:
-      class: wheel5.logutils.BetterRotatingFileHandler
-      formatter: file_formatter
-      level: INFO
-      filename: /data/ssd/run/airdetect/logs/arena.log
-      maxBytes: 134217728
-      backupCount: 8
-
     wheel5_out_handler:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
@@ -96,13 +81,7 @@ logging:
     handlers: [root_out_handler, root_log_handler, console_handler]
 
   loggers:
-    arena:
-      level: INFO
-      handlers: [arena_out_handler, arena_log_handler, console_handler]
 
     wheel5:
       level: INFO
-      handlers: [wheel5_out_handler, wheel5_log_handler, arena_out_handler, arena_log_handler, console_handler]
-
-    wheel5.tracking:
-      level: DEBUG
+      handlers: [wheel5_out_handler, wheel5_log_handler, console_handler]

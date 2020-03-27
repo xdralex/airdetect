@@ -321,7 +321,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         return self.model(x)
 
     def training_step(self, batch, batch_idx) -> Dict:
-        x, y, _ = batch
+        x, y = batch
 
         z = self.forward(x)
         y_probs_hat = torch.exp(log_softmax(z, dim=1))
@@ -340,7 +340,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         return {'loss': loss}
 
     def validation_step(self, batch, batch_idx: int, dataloader_idx: int) -> Dict:
-        x, y, _ = batch
+        x, y = batch
 
         z = self.forward(x)
         y_probs_hat = torch.exp(log_softmax(z, dim=1))
@@ -548,7 +548,7 @@ def eval_blend(dataset_config: Dict[str, str],
             with tqdm(total=len(loader), disable=not show_progress) as progress_bar:
                 progress_bar.set_description(f'Evaluating model {i + 1}')
 
-                for x, y, _ in loader:
+                for x, y in loader:
                     z_list.append(model.forward(x))
                     y_list.append(y)
 
