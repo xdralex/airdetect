@@ -339,7 +339,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         elif dataloader_idx == 2:  # train_orig_loader
             loss = self.eval_loss(z, y)
             correct, total = self.eval_accuracy(y_hat, y)
-            prefix = 'train'
+            prefix = 'train-orig'
         else:
             raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
 
@@ -359,7 +359,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
             elif dataloader_idx == 1:  # train_subset_loader
                 prefix = 'train-aug'
             elif dataloader_idx == 2:  # train_orig_loader
-                prefix = 'train'
+                prefix = 'train-orig'
             else:
                 raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
 
