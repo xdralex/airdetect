@@ -521,7 +521,7 @@ def eval_blend(dataset_config: Dict[str, str],
             z_list = []
             y_list = []
             with tqdm(total=len(loader), disable=not show_progress) as progress_bar:
-                progress_bar.set_description(f'Evaluating model {i}')
+                progress_bar.set_description(f'Evaluating model {i + 1}')
 
                 for x, y, _ in loader:
                     z_list.append(model.forward(x))
