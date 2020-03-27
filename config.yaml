@@ -1,32 +1,32 @@
 tracking:
-  snapshot_root: /data/ssd/run/airliners/snapshots
-  tensorboard_root: /data/ssd/run/airliners/tensorboard
-  tracker_root: /data/ssd/run/airliners/tracker
+  snapshot_root: /data/ssd/run/airdetect/snapshots
+  tensorboard_root: /data/ssd/run/airdetect/tensorboard
+  tracker_root: /data/ssd/run/airdetect/tracker
 
 datasets:
   train:
-    metadata: /data/ssd/datasets/airliners/train.csv
-    annotations: /data/ssd/datasets/airliners/ext_train.csv
-    image_dir: /data/ssd/datasets/airliners/train
-    lmdb_dir: /data/nvme/run/airliners/lmdb/train
+    metadata: /data/ssd/datasets/airdetect/train.csv
+    annotations: /data/ssd/datasets/airdetect/ext_train.csv
+    image_dir: /data/ssd/datasets/airdetect/train
+    lmdb_dir: /data/nvme/run/airdetect/lmdb/train
 
   public_test:
-    metadata: /data/ssd/datasets/airliners/public_test.csv
-    annotations: /data/ssd/datasets/airliners/ext_public_test.csv
-    image_dir: /data/ssd/datasets/airliners/public_test
-    lmdb_dir: /data/nvme/run/airliners/lmdb/public_test
+    metadata: /data/ssd/datasets/airdetect/public_test.csv
+    annotations: /data/ssd/datasets/airdetect/ext_public_test.csv
+    image_dir: /data/ssd/datasets/airdetect/public_test
+    lmdb_dir: /data/nvme/run/airdetect/lmdb/public_test
 
   private_test:
-    metadata: /data/ssd/datasets/airliners/private_test.csv
-    annotations: /data/ssd/datasets/airliners/ext_private_test.csv
-    image_dir: /data/ssd/datasets/airliners/private_test
-    lmdb_dir: /data/nvme/run/airliners/lmdb/private_test
+    metadata: /data/ssd/datasets/airdetect/private_test.csv
+    annotations: /data/ssd/datasets/airdetect/ext_private_test.csv
+    image_dir: /data/ssd/datasets/airdetect/private_test
+    lmdb_dir: /data/nvme/run/airdetect/lmdb/private_test
 
-  classes: /data/ssd/datasets/airliners/classes
+  classes: /data/ssd/datasets/airdetect/classes
 
 
 viz:
-  nn_dir: /data/ssd/run/airliners/viz/networks
+  nn_dir: /data/ssd/run/airdetect/viz/networks
 
 
 logging:
@@ -50,14 +50,14 @@ logging:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/ssd/run/airliners/logs/root.out
+      filename: /data/ssd/run/airdetect/logs/root.out
       mode: w
 
     root_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/ssd/run/airliners/logs/root.log
+      filename: /data/ssd/run/airdetect/logs/root.log
       maxBytes: 134217728
       backupCount: 8
 
@@ -65,14 +65,14 @@ logging:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/ssd/run/airliners/logs/arena.out
+      filename: /data/ssd/run/airdetect/logs/arena.out
       mode: w
 
     arena_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: INFO
-      filename: /data/ssd/run/airliners/logs/arena.log
+      filename: /data/ssd/run/airdetect/logs/arena.log
       maxBytes: 134217728
       backupCount: 8
 
@@ -80,14 +80,14 @@ logging:
       class: wheel5.logutils.BetterFileHandler
       formatter: file_formatter
       level: DEBUG
-      filename: /data/ssd/run/airliners/logs/wheel5.out
+      filename: /data/ssd/run/airdetect/logs/wheel5.out
       mode: w
 
     wheel5_log_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: DEBUG
-      filename: /data/ssd/run/airliners/logs/wheel5.log
+      filename: /data/ssd/run/airdetect/logs/wheel5.log
       maxBytes: 134217728
       backupCount: 8
 
