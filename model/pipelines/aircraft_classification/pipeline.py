@@ -233,8 +233,6 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         #
         fit_dataset = self.load_dataset(self.config.dataset_config)
 
-        # TODO: shuffle loader?
-
         #
         # Split into train/validation
         #
