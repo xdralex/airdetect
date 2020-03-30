@@ -9,7 +9,7 @@ import click
 
 
 def launch_tensorboard(tensorboard_root: str, port: int = 6006):
-    logger = logging.getLogger('arena.util')
+    logger = logging.getLogger(__name__)
 
     tb = program.TensorBoard()
     tb.configure(argv=[None, '--bind_all', '--port', f'{port}', '--logdir', tensorboard_root])

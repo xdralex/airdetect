@@ -46,42 +46,46 @@ logging:
       level: WARNING
       stream: ext://sys.stdout
 
-    root_out_handler:
-      class: wheel5.logutils.BetterFileHandler
-      formatter: file_formatter
-      level: INFO
-      filename: /data/ssd/run/airdetect/logs/root.out
-      mode: w
-
-    root_log_handler:
+    root_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: INFO
       filename: /data/ssd/run/airdetect/logs/root.log
-      maxBytes: 134217728
+      maxBytes: 1073741824
       backupCount: 8
 
-    wheel5_out_handler:
-      class: wheel5.logutils.BetterFileHandler
+    airdetect_handler:
+      class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: DEBUG
-      filename: /data/ssd/run/airdetect/logs/wheel5.out
-      mode: w
+      filename: /data/ssd/run/airdetect/logs/airdetect.log
+      maxBytes: 1073741824
+      backupCount: 8
 
-    wheel5_log_handler:
+    wheel5_handler:
       class: wheel5.logutils.BetterRotatingFileHandler
       formatter: file_formatter
       level: DEBUG
       filename: /data/ssd/run/airdetect/logs/wheel5.log
-      maxBytes: 134217728
+      maxBytes: 1073741824
       backupCount: 8
 
   root:
     level: INFO
-    handlers: [root_out_handler, root_log_handler, console_handler]
+    handlers: [root_handler, console_handler]
 
   loggers:
+    airdetect:
+      level: INFO
+      handlers: [airdetect_handler, root_handler, console_handler]
 
     wheel5:
       level: INFO
-      handlers: [wheel5_out_handler, wheel5_log_handler, console_handler]
+      handlers: [wheel5_handler, root_handler, console_handler]
+
+    wheel5.metrics:
+      level: DEBUG
+
+    werkzeug:
+      level: WARNING
+      handlers: [root_handler, console_handler]

@@ -1,3 +1,4 @@
+import logging
 import os
 from collections import OrderedDict
 from dataclasses import dataclass, asdict
@@ -35,7 +36,7 @@ from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotD
 from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.metering import ReservoirSamplingMeter
-from wheel5.metrics import ExactMatchAccuracy, JaccardAccuracy
+from wheel5.metrics import ExactMatchAccuracy, DiceAccuracy
 from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
 from wheel5.tracking import ProbesInterface
@@ -81,6 +82,8 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
     def __init__(self, hparams: Dict):
         super(AircraftClassificationPipeline, self).__init__()
 
+        self.journal = logging.getLogger(f'airdetect.classification')
+
         self.hparams = hparams
         self.config = from_dict(AircraftClassificationConfig, hparams)
 
@@ -104,7 +107,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         self.model.fc = nn.Linear(in_features=self.model.fc.in_features, out_features=self.num_classes)
         self.group_names, self.optimizer_params = self.adjust_model_params()
 
-        self.train_accuracy = JaccardAccuracy()
+        self.train_accuracy = DiceAccuracy()
         self.train_loss = SoftLabelCrossEntropyLoss(
             smooth_factor=self.config.kv['lb_smooth'],
             smooth_dist=torch.full([self.num_classes], fill_value=1.0 / self.num_classes))
@@ -169,7 +172,6 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         # DataLoaders
         #
         self.train_loader = None
-        self.train_subset_loader = None
         self.train_orig_loader = None
         self.val_loader = None
 
@@ -234,59 +236,58 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         # TODO: shuffle loader?
 
         #
-        # Split into train/val/ctrl
+        # Split into train/validation
         #
         fit_indices = list(range(0, len(fit_dataset)))
         self.random_state.shuffle(fit_indices)
 
         val_divider = int(np.round(self.config.val_split * len(fit_indices)))
-        before_val_indices, after_val_indices = fit_indices[val_divider:], fit_indices[:val_divider]
+        train_root_dataset = Subset(fit_dataset, fit_indices[val_divider:])
+        val_dataset = Subset(fit_dataset, fit_indices[:val_divider])
 
-        train_root_dataset = Subset(fit_dataset, before_val_indices)
-        val_dataset = Subset(fit_dataset, after_val_indices)
-
-        train_targets = targets(train_root_dataset)
-
-        train_root_indices = list(range(0, len(train_targets)))
-        train_sample_size = int(len(train_root_indices) * self.config.train_sample)
-        train_sample_indices = self.random_state.choice(train_root_indices, size=train_sample_size, replace=False)
+        self.journal.info(f'Datasets: train_root[{len(train_root_dataset)}], val[{len(val_dataset)}]')
 
         #
-        # Training
+        # Train datasets
         #
         train_dataset = ImageOneHotDataset(train_root_dataset, self.num_classes)
 
         train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_pre_cutmix)
         if self.config.cutmix:
             cutmix_alpha = self.config.kv['cutmix_alpha']
-            train_dataset = ImageCutMixDataset(train_dataset, alpha=cutmix_alpha, random_state=self.random_state)
+            train_dataset = ImageCutMixDataset(train_dataset, alpha=cutmix_alpha, name='train')
 
         train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_pre_mixup)
         if self.config.mixup:
             mixup_alpha = self.config.kv['mixup_alpha']
-            train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, random_state=self.random_state)
+            train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, name='train')
 
         train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_final)
         train_dataset = TransformDataset(train_dataset, self.model_transform)
+
+        train_root_indices = list(range(0, len(train_root_dataset)))
+        train_sample_size = int(len(train_root_indices) * self.config.train_sample)
+        train_sample_indices = self.random_state.choice(train_root_indices, size=train_sample_size, replace=False)
+
+        train_orig_dataset = Subset(train_root_dataset, train_sample_indices)
+
+        self.journal.info(f'Datasets: train[{len(train_dataset)}], train-orig[{len(train_orig_dataset)}]')
+
+        #
+        # Loaders
+        #
         self.train_loader = DataLoader(train_dataset,
                                        batch_size=self.config.train_batch,
                                        num_workers=self.config.train_workers,
-                                       pin_memory=True)
-
-        #
-        # Validation
-        #
-        self.train_subset_loader = DataLoader(Subset(train_dataset, train_sample_indices),
-                                              batch_size=self.config.eval_batch,
-                                              num_workers=self.config.eval_workers,
-                                              pin_memory=True)
-
-        self.train_orig_loader = self.prepare_eval_loader(Subset(train_root_dataset, train_sample_indices))
+                                       pin_memory=True,
+                                       shuffle=True)
+        self.train_orig_loader = self.prepare_eval_loader(train_orig_dataset)
         self.val_loader = self.prepare_eval_loader(val_dataset)
 
         #
         # Model adjustment
         #
+        train_targets = targets(train_root_dataset)
         target_probs = class_distribution(train_targets, self.num_classes)
         init_softmax_logits(self.model.fc.bias, torch.from_numpy(target_probs))
 
@@ -327,12 +328,13 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         y_probs_hat = torch.exp(log_softmax(z, dim=1))
 
         loss = self.train_loss(z, y)
-        correct, total = self.train_accuracy(y_probs_hat, y)
+        prefix = 'train'
+        numer, denom = self.train_accuracy(y_probs_hat, y, prefix)
 
         output = {
-            f'train_loss': loss,
-            f'train_correct': correct,
-            f'train_total': total
+            f'{prefix}_loss': loss,
+            f'{prefix}_numer': numer,
+            f'{prefix}_denom': denom
         }
         self.training_outputs.append(output)
 
@@ -346,18 +348,14 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         y_probs_hat = torch.exp(log_softmax(z, dim=1))
         y_class_hat = torch.argmax(y_probs_hat, dim=1)
 
-        if dataloader_idx == 0:  # val_loader
-            loss = self.eval_loss(z, y)
-            correct, total = self.eval_accuracy(y_class_hat, y)
+        if dataloader_idx == 0:     # val_loader
             prefix = 'val'
-        elif dataloader_idx == 1:  # train_subset_loader
-            loss = self.train_loss(z, y)
-            correct, total = self.train_accuracy(y_probs_hat, y)
-            prefix = 'train-aug'
-        elif dataloader_idx == 2:  # train_orig_loader
             loss = self.eval_loss(z, y)
-            correct, total = self.eval_accuracy(y_class_hat, y)
+            numer, denom = self.eval_accuracy(y_class_hat, y, prefix)
+        elif dataloader_idx == 1:   # train_orig_loader
             prefix = 'train-orig'
+            loss = self.eval_loss(z, y)
+            numer, denom = self.eval_accuracy(y_class_hat, y, prefix)
         else:
             raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
 
@@ -365,8 +363,8 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         return {
             f'{prefix}_loss': loss,
-            f'{prefix}_correct': correct,
-            f'{prefix}_total': total
+            f'{prefix}_numer': numer,
+            f'{prefix}_denom': denom
         }
 
     def validation_epoch_end(self, outputs: List[Dict]) -> Dict:
@@ -376,11 +374,9 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         outputs_by_prefix['train'] = self.training_outputs
 
         for dataloader_idx, output in enumerate(outputs):
-            if dataloader_idx == 0:  # val_loader
+            if dataloader_idx == 0:     # val_loader
                 prefix = 'val'
-            elif dataloader_idx == 1:  # train_subset_loader
-                prefix = 'train-aug'
-            elif dataloader_idx == 2:  # train_orig_loader
+            elif dataloader_idx == 1:   # train_orig_loader
                 prefix = 'train-orig'
             else:
                 raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
@@ -390,9 +386,9 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         for prefix, output in outputs_by_prefix.items():
             loss = torch.stack([x[f'{prefix}_loss'] for x in output]).mean()
 
-            correct_sum = torch.stack([x[f'{prefix}_correct'] for x in output]).sum()
-            total_sum = torch.stack([x[f'{prefix}_total'] for x in output]).sum()
-            accuracy = correct_sum / float(total_sum)
+            numer_sum = torch.stack([x[f'{prefix}_numer'] for x in output]).sum()
+            denom_sum = torch.stack([x[f'{prefix}_denom'] for x in output]).sum()
+            accuracy = numer_sum / float(denom_sum)
 
             metrics[f'{prefix}_loss'] = loss
             metrics[f'{prefix}_acc'] = accuracy
@@ -413,7 +409,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         return self.train_loader
 
     def val_dataloader(self) -> List[DataLoader]:
-        return [self.val_loader, self.train_subset_loader, self.train_orig_loader]
+        return [self.val_loader, self.train_orig_loader]
 
     def add_epoch_samples(self, name: str, batch_idx: int, x: torch.Tensor, y: torch.Tensor):
         if batch_idx == 0 or self.config.logging_sampling_full:
@@ -530,6 +526,8 @@ def eval_blend(dataset_config: Dict[str, str],
                snapshot_paths: List[str],
                show_progress: bool = True) -> Dict[str, float]:
 
+    torch.set_printoptions(linewidth=250, edgeitems=10)
+
     with torch.no_grad():
         loader = None
 
@@ -569,8 +567,8 @@ def eval_blend(dataset_config: Dict[str, str],
 
         model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_paths[0], map_location=torch.device(f'cuda:{device}'))
 
-        correct, total = model.eval_accuracy(y_class_hat, y_only)
-        accuracy = float(correct) / float(total)
+        numer, denom = model.eval_accuracy(y_class_hat, y_only, 'test')
+        accuracy = float(numer) / float(denom)
 
         return {
             'acc': accuracy
@@ -584,6 +582,8 @@ def fit_trial(tracker: Tracker,
               device: int,
               config: AircraftClassificationConfig,
               max_epochs: int) -> Dict[str, float]:
+
+    torch.set_printoptions(linewidth=250, edgeitems=10)
 
     trial_tracker = tracker.new_trial(config.kv)
     snapshot_trial = os.path.join(snapshot_dir, trial_tracker.trial)
@@ -615,7 +615,5 @@ def fit_trial(tracker: Tracker,
         'min_train_loss': metrics_df['train_loss'].min(),
         'max_train_acc': metrics_df['train_acc'].max(),
         'min_train-orig_loss': metrics_df['train-orig_loss'].min(),
-        'max_train-orig_acc': metrics_df['train-orig_acc'].max(),
-        'min_train-aug_loss': metrics_df['train-aug_loss'].min(),
-        'max_train-aug_acc': metrics_df['train-aug_acc'].max()
+        'max_train-orig_acc': metrics_df['train-orig_acc'].max()
     }
