@@ -35,12 +35,13 @@ import wheel5.transforms.torchvision as torchviz_ext
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, targets, LMDBImageDataset
 from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
-from wheel5.metering import ReservoirSamplingMeter
+from wheel5.metering import ReservoirSamplingMeter, ArrayAccumMeter
 from wheel5.metrics import ExactMatchAccuracy, DiceAccuracy
 from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
 from wheel5.tracking import ProbesInterface
 from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
+from wheel5.visualization import visualize_cm
 
 Transform = Callable[[Img], Img]
 
@@ -73,11 +74,20 @@ class AircraftClassificationConfig:
     eval_workers: int = 4
 
 
+class PredictionMeter(object):
+    def __init__(self):
+        self.y_class = ArrayAccumMeter()
+        self.y_class_hat = ArrayAccumMeter()
+
+
+@dataclass
+class Sample:
+    x: torch.Tensor
+    y: torch.Tensor
+
+
 class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
-    @dataclass
-    class Sample:
-        x: torch.Tensor
-        y: torch.Tensor
+
 
     def __init__(self, hparams: Dict):
         super(AircraftClassificationPipeline, self).__init__()
@@ -94,6 +104,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         #
         self.epoch_fit_metrics = None
         self.epoch_samples: Dict[str, ReservoirSamplingMeter] = {}
+        self.epoch_predictions: Dict[str, PredictionMeter] = {}
 
         self.training_outputs = []
 
@@ -313,7 +324,10 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
     def on_epoch_start(self):
         self.epoch_fit_metrics = {}
+
         self.epoch_samples = {}
+        self.epoch_predictions = {}
+
         self.training_outputs = []
 
     def forward(self, x):
@@ -348,16 +362,16 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         if dataloader_idx == 0:     # val_loader
             prefix = 'val'
-            loss = self.eval_loss(z, y)
-            numer, denom = self.eval_accuracy(y_class_hat, y, prefix)
         elif dataloader_idx == 1:   # train_orig_loader
             prefix = 'train-orig'
-            loss = self.eval_loss(z, y)
-            numer, denom = self.eval_accuracy(y_class_hat, y, prefix)
         else:
             raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
 
+        loss = self.eval_loss(z, y)
+        numer, denom = self.eval_accuracy(y_class_hat, y, prefix)
+
         self.add_epoch_samples(prefix, batch_idx, x, y)
+        self.add_epoch_predictions(prefix, y, y_class_hat)
 
         return {
             f'{prefix}_loss': loss,
@@ -416,9 +430,19 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
             elements = []
             for i in range(0, y.shape[0]):
-                sample = self.Sample(x=x[i], y=y[i])
+                sample = Sample(x=x[i], y=y[i])
                 elements.append(sample)
-            self.epoch_samples[name].add(elements)
+
+            meter = self.epoch_samples[name]
+            meter.add(elements)
+
+    def add_epoch_predictions(self, name: str, y_class: torch.Tensor, y_class_hat: torch.Tensor):
+        if name not in self.epoch_predictions:
+            self.epoch_predictions[name] = PredictionMeter()
+
+        meter = self.epoch_predictions[name]
+        meter.y_class.add(y_class)
+        meter.y_class_hat.add(y_class_hat)
 
     def probe_epoch_fit_metrics(self) -> Dict[str, float]:
         return {k: float(v) for k, v in self.epoch_fit_metrics.items()}
@@ -452,21 +476,24 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         return {f'samples/{name}': meter_to_tensors(meter) for name, meter in self.epoch_samples.items()}
 
     def probe_epoch_figures(self) -> Dict[str, Figure]:
-        #     if prediction is not None:
-        #         cm_fig = visualize_cm(classes, y_true=prediction['y'].numpy(), y_pred=prediction['y_hat'].numpy())
-        #         self.tb_writer.add_figure(f'predictions/cm', cm_fig, state.epoch)
-        #
-        #         pil_image_transform = ToPILImage()
-        #
-        #         def viz_transform(x):
-        #             return pil_image_transform(self.sample_img_transform(x))
-        #
-        #         mismatch_figs = visualize_top_errors(classes,
-        #                                              y_true=prediction['y'].numpy(),
-        #                                              y_pred=prediction['y_hat'].numpy(),
-        #                                              image_indices=prediction['indices'].numpy(),
-        #                                              image_dataset=TransformDataset(prediction_dataset, viz_transform))
-        return {}
+        figures = {}
+
+        for name, meter in self.epoch_predictions.items():
+            y_class = meter.y_class.value().cpu().numpy()
+            y_class_hat = meter.y_class_hat.value().cpu().numpy()
+
+            # TODO: draw mispredicted images
+            cm_fig = visualize_cm(self.target_classes, y_true=y_class, y_pred=y_class_hat)
+            figures[f'confusion_matrix/{name}'] = cm_fig
+
+            #
+            #         mismatch_figs = visualize_top_errors(classes,
+            #                                              y_true=prediction['y'].numpy(),
+            #                                              y_pred=prediction['y_hat'].numpy(),
+            #                                              image_indices=prediction['indices'].numpy(),
+            #                                              image_dataset=TransformDataset(prediction_dataset, viz_transform))
+
+        return figures
 
     def get_tqdm_dict(self):
         d = dict(super(AircraftClassificationPipeline, self).get_tqdm_dict())
