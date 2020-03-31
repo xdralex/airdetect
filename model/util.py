@@ -1,4 +1,5 @@
 import logging
+import math
 from collections import OrderedDict
 from typing import List, Optional, Dict, Tuple
 
@@ -19,12 +20,28 @@ def launch_tensorboard(tensorboard_root: str, port: int = 6006):
 
 
 def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[str]] = None) -> str:
+    def format_float(v: float) -> str:
+        if abs(int(v) - v) < 1e-6:
+            return f'{v:.1f}'
+
+        if abs(v) < 1e-3 or abs(v) >= 1e+5:
+            return f'{v:.2e}'
+
+        zeros = math.ceil(math.log10(math.fabs(v) + 1))
+        if zeros < 5:
+            return f'{v:.{5 - zeros}f}'
+        else:
+            return f'{v:.1f}'
+
     if drop_cols is None:
         drop_cols = []
 
     df = df.drop(columns=drop_cols)
     if top:
         df = df.head(top)
+
+    for col in list(df.columns):
+        df[col] = df[col].apply(lambda x: format_float(x) if isinstance(x, float) else str(x))
 
     return tabulate(df, headers="keys", showindex=False, tablefmt='github')
 
