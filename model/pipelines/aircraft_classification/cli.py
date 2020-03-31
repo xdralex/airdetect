@@ -20,13 +20,8 @@ from wheel5.tracking import Tracker, CheckpointPattern
 @click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
 @click.option('--rnd-seed', 'rnd_seed', default=42, help='random seed', type=int)
 @click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
-@click.option('--freeze', 'freeze', default=-1, help='freeze first K layers', type=int)
-@click.option('--mixup', 'mixup', is_flag=True, help='apply mixup augmentation', type=bool)
-@click.option('--cutmix', 'cutmix', is_flag=True, help='apply cutmix augmentation', type=bool)
 @click.option('--kv', 'kv', default='', help='key-value parameters (k1=v1,k2=v2,...)', type=str)
-def cli_trial(experiment: str, device: int, repo: str, network: str,
-              rnd_seed: int, max_epochs: int, freeze: int, mixup: bool, cutmix: bool,
-              kv: str):
+def cli_trial(experiment: str, device: int, repo: str, network: str, rnd_seed: int, max_epochs: int, kv: str):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
@@ -50,13 +45,10 @@ def cli_trial(experiment: str, device: int, repo: str, network: str,
         repo=repo,
         network=network,
 
-        freeze=freeze,
-        mixup=mixup,
-        cutmix=cutmix,
-
         kv=parse_kv(kv)
     )
 
+    print(f'\n{Tracker.dict_to_key(pipeline_config.kv)}')
     results = fit_trial(tracker=tracker,
                         snapshot_dir=snapshot_dir,
                         tensorboard_root=tensorboard_root,
@@ -80,11 +72,7 @@ def cli_trial(experiment: str, device: int, repo: str, network: str,
 @click.option('--space', 'space', required=True, help='search space name', type=str)
 @click.option('--trials', 'trials', required=True, help='number of trials to perform', type=int)
 @click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
-@click.option('--freeze', 'freeze', default=-1, help='freeze first K layers', type=int)
-@click.option('--mixup', 'mixup', is_flag=True, help='apply mixup augmentation', type=bool)
-@click.option('--cutmix', 'cutmix', is_flag=True, help='apply cutmix augmentation', type=bool)
-def cli_search(experiment: str, device: int, repo: str, network: str,
-               rnd_seed: int, space: str, trials: int, max_epochs: int, freeze: int, mixup: bool, cutmix: bool):
+def cli_search(experiment: str, device: int, repo: str, network: str, rnd_seed: int, space: str, trials: int, max_epochs: int):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
@@ -109,13 +97,10 @@ def cli_search(experiment: str, device: int, repo: str, network: str,
             repo=repo,
             network=network,
 
-            freeze=freeze,
-            mixup=mixup,
-            cutmix=cutmix,
-
             kv=kv
         )
 
+        print(f'\n{Tracker.dict_to_key(pipeline_config.kv)}')
         results = fit_trial(tracker=tracker,
                             snapshot_dir=snapshot_dir,
                             tensorboard_root=tensorboard_root,

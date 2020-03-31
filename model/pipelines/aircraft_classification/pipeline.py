@@ -56,10 +56,6 @@ class AircraftClassificationConfig:
     repo: str
     network: str
 
-    freeze: int
-    mixup: bool
-    cutmix: bool
-
     kv: Dict[str, float]
 
     logging_sampling_full: bool = False
@@ -120,7 +116,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         self.train_accuracy = DiceAccuracy()
         self.train_loss = SoftLabelCrossEntropyLoss(
-            smooth_factor=self.config.kv['lb_smooth'],
+            smooth_factor=self.config.kv['x_lbs'],
             smooth_dist=torch.full([self.num_classes], fill_value=1.0 / self.num_classes))
 
         self.eval_accuracy = ExactMatchAccuracy()
@@ -201,7 +197,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         def freeze_params():
             for index, (name, child) in enumerate(self.model.named_children()):
-                if index < self.config.freeze:
+                if index < int(round(self.config.kv['nn_frz'])):
                     for param in child.parameters(recurse=True):
                         param.requires_grad = False
 
@@ -262,13 +258,13 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         train_dataset = ImageOneHotDataset(train_root_dataset, self.num_classes)
 
         train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_pre_cutmix)
-        if self.config.cutmix:
-            cutmix_alpha = self.config.kv['cutmix_alpha']
+        if self.config.kv['x_cut'] > 0.5:
+            cutmix_alpha = self.config.kv['x_cut_a']
             train_dataset = ImageCutMixDataset(train_dataset, alpha=cutmix_alpha, name='train')
 
         train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_pre_mixup)
-        if self.config.mixup:
-            mixup_alpha = self.config.kv['mixup_alpha']
+        if self.config.kv['x_mxp'] > 0.5:
+            mixup_alpha = self.config.kv['x_mxp_a']
             train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, name='train')
 
         train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_final)
@@ -318,7 +314,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         scheduler = CosineAnnealingWarmRestarts(optimizer,
                                                 T_0=int(round(self.config.kv['lr_t0'])),
                                                 T_mult=int(round(self.config.kv['lr_f'])))
-        scheduler = WarmupScheduler(optimizer, epochs=self.config.kv['lr_warmup'], next_scheduler=scheduler)
+        scheduler = WarmupScheduler(optimizer, epochs=self.config.kv['lr_w'], next_scheduler=scheduler)
 
         return [optimizer], [scheduler]
 
