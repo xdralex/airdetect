@@ -550,13 +550,15 @@ class TensorboardHparamsLogger(TensorBoardLogger):
         super(TensorboardHparamsLogger, self).log_hyperparams(config.kv)
 
 
-def build_heatmap(snapshot_path: str,
-                  dataset_config: Dict[str, str],
+def build_heatmap(dataset_config: Dict[str, str],
+                  snapshot_path: str,
                   device: int,
                   samples: int) -> Figure:
 
     model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=torch.device(f'cuda:{device}'))
-    model.freeze()
+
+    model.unfreeze()
+    model.eval()
 
     dataset = model.load_dataset(dataset_config)
     loader = model.prepare_eval_loader(dataset)
