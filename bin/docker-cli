@@ -6,7 +6,7 @@ DIR=$DIR/..
 IMAGE=xdralex/dl-dev:latest
 
 HOME=/home/apollo
-WORK=$HOME/model
+WORK=$HOME/package
 CACHE=$HOME/.cache
 
 if [[ "$1" == "--tensorboard" ]]
@@ -24,6 +24,6 @@ pushd "$DIR" > /dev/null || exit
 docker run --cap-add SYS_PTRACE --gpus all --shm-size=8192m -i -t --rm -u apollo -w $WORK $PORT_BINDING \
        -v /dev/urandom:/dev/urandom -v /dev/random:/dev/random \
        -v "/data/assets/.cache:$CACHE" -v "$PWD:$WORK" -v "/data/ssd:/data/ssd" -v "/data/nvme:/data/nvme" "$IMAGE" \
-	     python3.7 airdetect/cli.py "${@:1}"
+	     python3.7 model/cli.py "${@:1}"
 
 popd > /dev/null || exit

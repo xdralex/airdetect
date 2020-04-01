@@ -8,14 +8,14 @@ import yaml
 from torch import nn
 from torchsummary import summary
 from typing import Optional
+
+from airdetect.aircraft_classification import cli_eval as cls_eval
+from airdetect.aircraft_classification import cli_search as cls_search
+from airdetect.aircraft_classification import cli_trial as cls_trial
+from airdetect.util import dump, launch_tensorboard
 from wheel5 import logutils
 from wheel5.introspection import introspect, make_dot
 from wheel5.tracking import Tracker, TrialTracker
-
-from .aircraft_classification import cli_eval as cls_eval
-from .aircraft_classification import cli_search as cls_search
-from .aircraft_classification import cli_trial as cls_trial
-from .util import dump, launch_tensorboard
 
 
 @click.command(name='introspect-nn')
