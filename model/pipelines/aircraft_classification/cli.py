@@ -9,7 +9,7 @@ from hyperopt import fmin
 
 from pipelines.aircraft_classification.pipeline import AircraftClassificationConfig, fit_trial, eval_blend
 from pipelines.aircraft_classification.search import make_space_dict
-from util import launch_tensorboard, parse_kv, dump
+from pipelines.util import launch_tensorboard, parse_kv, dump
 from wheel5 import logutils
 from wheel5.tracking import Tracker, CheckpointPattern
 

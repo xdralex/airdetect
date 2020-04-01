@@ -12,7 +12,7 @@ from torchsummary import summary
 from pipelines.aircraft_classification import cli_search as cls_search
 from pipelines.aircraft_classification import cli_trial as cls_trial
 from pipelines.aircraft_classification import cli_eval as cls_eval
-from util import dump, launch_tensorboard
+from pipelines.util import dump, launch_tensorboard
 from wheel5.introspection import introspect, make_dot
 from wheel5.tracking import Tracker, TrialTracker
 from wheel5 import logutils

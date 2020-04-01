@@ -41,7 +41,8 @@ from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
 from wheel5.tracking import ProbesInterface
 from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
-from wheel5.visualization import visualize_cm
+from wheel5.viz import draw_confusion_matrix, draw_heatmap
+from wheel5.interpret.gradcam import GradCAM, logit_to_score
 
 Transform = Callable[[Img], Img]
 
@@ -479,7 +480,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
             y_class_hat = meter.y_class_hat.value().cpu().numpy()
 
             # TODO: draw mispredicted images
-            cm_fig = visualize_cm(self.target_classes, y_true=y_class, y_pred=y_class_hat)
+            cm_fig = draw_confusion_matrix(self.target_classes, y_true=y_class, y_pred=y_class_hat)
             figures[f'confusion_matrix/{name}'] = cm_fig
 
             #
@@ -490,6 +491,14 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
             #                                              image_dataset=TransformDataset(prediction_dataset, viz_transform))
 
         return figures
+
+    def introspect_grad_cam(self, batch):
+        score_fn = logit_to_score(class_index=0)  # TODO
+
+        with GradCAM(self.model, self.model.avgpool, score_fn) as grad_cam:
+            x, y = batch
+            saliency_map, _, _ = grad_cam.generate(x)
+            return saliency_map
 
     def get_tqdm_dict(self):
         d = dict(super(AircraftClassificationPipeline, self).get_tqdm_dict())
@@ -540,6 +549,38 @@ class TensorboardHparamsLogger(TensorBoardLogger):
     def log_hyperparams(self, params: Dict) -> None:
         config = from_dict(AircraftClassificationConfig, params)
         super(TensorboardHparamsLogger, self).log_hyperparams(config.kv)
+
+
+def build_heatmap(snapshot_path: str,
+                  dataset_config: Dict[str, str],
+                  device: int,
+                  samples: int) -> Figure:
+
+    model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=torch.device(f'cuda:{device}'))
+    model.freeze()
+
+    dataset = model.load_dataset(dataset_config)
+    loader = model.prepare_eval_loader(dataset)
+
+    x_list = []
+    y_list = []
+    count = 0
+
+    for x, y in loader:
+        x_list.append(x)
+        y_list.append(y)
+
+        count += x.shape[0]
+        if count >= samples:
+            break
+
+    x = torch.cat(x_list)[0:samples]
+    y = torch.cat(y_list)[0:samples]
+
+    batch = (x, y)
+    mask = model.introspect_grad_cam(batch)
+
+    return draw_heatmap(None, x[0])
 
 
 def eval_blend(dataset_config: Dict[str, str],
