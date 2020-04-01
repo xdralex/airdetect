@@ -142,7 +142,8 @@ def cli_eval(experiment: str, device: int, top: int, metric_name: str, order: st
     else:
         drop_cols = [col.strip() for col in hide.split(',') if col.strip() != '']
         df_best = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
-        print(f'Evaluating top models on the >>{test}<< test dataset: \n\n{dump(df_best, top=top, drop_cols=drop_cols)}\n\n\n')
+        df_best = df_best.head(top)
+        print(f'Evaluating top models on the >>{test}<< test dataset: \n\n{dump(df_best, drop_cols=drop_cols)}\n\n\n')
 
         snapshot_dir = os.path.join(snapshot_root, experiment)
 

@@ -19,7 +19,7 @@ def launch_tensorboard(tensorboard_root: str, port: int = 6006):
     logger.info(f'Launched TensorBoard at {url}')
 
 
-def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[str]] = None) -> str:
+def dump(df: pd.DataFrame, drop_cols: Optional[List[str]] = None) -> str:
     def format_float(v: float) -> str:
         if abs(int(v) - v) < 1e-6:
             return f'{v:.1f}'
@@ -37,9 +37,6 @@ def dump(df: pd.DataFrame, top: Optional[int] = None, drop_cols: Optional[List[s
         drop_cols = []
 
     df = df.drop(columns=drop_cols)
-    if top:
-        df = df.head(top)
-
     for col in list(df.columns):
         df[col] = df[col].apply(lambda x: format_float(x) if isinstance(x, float) else str(x))
 
