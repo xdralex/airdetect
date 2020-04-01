@@ -1,9 +1,6 @@
 import logging
 import os
 from collections import OrderedDict
-from dataclasses import dataclass, asdict
-from typing import Dict, Optional, Union
-from typing import List, Callable
 
 import albumentations as albu
 import cv2
@@ -11,9 +8,12 @@ import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
+import wheel5.transforms.albumentations as albu_ext
+import wheel5.transforms.torchvision as torchviz_ext
 from PIL import Image
 from PIL.Image import Image as Img
 from dacite import from_dict
+from dataclasses import dataclass, asdict
 from matplotlib.figure import Figure
 from numpy.random.mtrand import RandomState
 from pytorch_lightning import Trainer
@@ -29,11 +29,11 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import Subset, DataLoader, Dataset
 from torchvision import transforms
 from tqdm import tqdm
-
-import wheel5.transforms.albumentations as albu_ext
-import wheel5.transforms.torchvision as torchviz_ext
+from typing import Dict, Optional, Union
+from typing import List, Callable
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, targets, LMDBImageDataset
 from wheel5.dataset.functional import class_distribution
+from wheel5.interpret.gradcam import GradCAM, logit_to_score
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.metering import ReservoirSamplingMeter, ArrayAccumMeter
 from wheel5.metrics import ExactMatchAccuracy, DiceAccuracy
@@ -42,7 +42,6 @@ from wheel5.scheduler import WarmupScheduler
 from wheel5.tracking import ProbesInterface
 from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
 from wheel5.viz import draw_confusion_matrix, draw_heatmap
-from wheel5.interpret.gradcam import GradCAM, logit_to_score
 
 Transform = Callable[[Img], Img]
 

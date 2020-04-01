@@ -1,17 +1,17 @@
 import os
-from typing import Dict
 
 import click
 import hyperopt
 import pandas as pd
 import yaml
 from hyperopt import fmin
-
-from pipelines.aircraft_classification.pipeline import AircraftClassificationConfig, fit_trial, eval_blend
-from pipelines.aircraft_classification.search import make_space_dict
-from pipelines.util import launch_tensorboard, parse_kv, dump
+from typing import Dict
 from wheel5 import logutils
 from wheel5.tracking import Tracker, CheckpointPattern
+
+from .pipeline import AircraftClassificationConfig, fit_trial, eval_blend
+from .search import make_space_dict
+from ..util import launch_tensorboard, parse_kv, dump
 
 
 @click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)

@@ -1,6 +1,5 @@
 import os
 import re
-from typing import Optional
 
 import click
 import pandas as pd
@@ -8,14 +7,15 @@ import torch
 import yaml
 from torch import nn
 from torchsummary import summary
-
-from pipelines.aircraft_classification import cli_search as cls_search
-from pipelines.aircraft_classification import cli_trial as cls_trial
-from pipelines.aircraft_classification import cli_eval as cls_eval
-from pipelines.util import dump, launch_tensorboard
+from typing import Optional
+from wheel5 import logutils
 from wheel5.introspection import introspect, make_dot
 from wheel5.tracking import Tracker, TrialTracker
-from wheel5 import logutils
+
+from .aircraft_classification import cli_eval as cls_eval
+from .aircraft_classification import cli_search as cls_search
+from .aircraft_classification import cli_trial as cls_trial
+from .util import dump, launch_tensorboard
 
 
 @click.command(name='introspect-nn')
