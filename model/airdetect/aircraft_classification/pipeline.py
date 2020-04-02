@@ -29,7 +29,7 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import Subset, DataLoader, Dataset
 from torchvision import transforms
 from tqdm import tqdm
-from typing import Dict, Optional, Union
+from typing import Dict, Optional, Union, Tuple
 from typing import List, Callable
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, targets, LMDBImageDataset
 from wheel5.dataset.functional import class_distribution
@@ -84,11 +84,10 @@ class Sample:
 
 class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
-
     def __init__(self, hparams: Dict):
         super(AircraftClassificationPipeline, self).__init__()
 
-        self.journal = logging.getLogger(f'airdetect.classification')
+        self.journal = logging.getLogger(__name__)
 
         self.hparams = hparams
         self.config = from_dict(AircraftClassificationConfig, hparams)
@@ -491,13 +490,26 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         return figures
 
-    def introspect_grad_cam(self, batch):
-        score_fn = logit_to_score(class_index=0)  # TODO
+    def introspect_grad_cam(self, batch, class_selector: str, inter_mode: str = 'bilinear') -> torch.Tensor:
+        layer = self.model.layer4
 
-        with GradCAM(self.model, self.model.avgpool, score_fn) as grad_cam:
-            x, y = batch
-            saliency_map, _, _ = grad_cam.generate(x)
-            return saliency_map
+        x, y = batch
+        masks_list = []
+        for i in range(0, x.shape[0]):
+            sample_x = x[i:i + 1]
+            sample_y = y[i:i + 1]
+
+            if class_selector == 'pred':
+                score_fn = logit_to_score()
+            elif class_selector == 'true':
+                score_fn = logit_to_score(int(sample_y))
+            else:
+                raise AssertionError(f'Invalid class selector: {class_selector}')
+
+            with GradCAM(self.model, layer, score_fn) as grad_cam:
+                masks_list.append(grad_cam.generate(sample_x, inter_mode))
+
+        return torch.stack(masks_list)
 
     def get_tqdm_dict(self):
         d = dict(super(AircraftClassificationPipeline, self).get_tqdm_dict())
@@ -578,10 +590,17 @@ def build_heatmap(dataset_config: Dict[str, str],
     x = torch.cat(x_list)[0:samples]
     y = torch.cat(y_list)[0:samples]
 
-    batch = (x, y)
-    mask = model.introspect_grad_cam(batch)
+    z = model.forward(x)
+    y_probs_hat = torch.exp(log_softmax(z, dim=1))
+    y_class_hat = torch.argmax(y_probs_hat, dim=1)
 
-    return draw_heatmap(None, x[0])
+    batch = (x, y)
+    mask = model.introspect_grad_cam(batch, class_selector='true', inter_mode='bilinear')
+    mask_hat = model.introspect_grad_cam(batch, class_selector='pred', inter_mode='bilinear')
+
+    x_sample = torch.stack([model.sample_transform(x[i]) for i in range(0, samples)])
+
+    return draw_heatmap(x_sample, y, y_class_hat, mask, mask_hat, model.target_classes)
 
 
 def eval_blend(dataset_config: Dict[str, str],
