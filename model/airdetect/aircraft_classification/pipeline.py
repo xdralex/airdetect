@@ -33,7 +33,7 @@ from typing import Dict, Optional, Union, Tuple
 from typing import List, Callable
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, targets, LMDBImageDataset
 from wheel5.dataset.functional import class_distribution
-from wheel5.interpret.gradcam import GradCAM, logit_to_score
+from wheel5.interpret.gradcam import GradCAM, GradCAMpp, logit_to_score
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.metering import ReservoirSamplingMeter, ArrayAccumMeter
 from wheel5.metrics import ExactMatchAccuracy, DiceAccuracy
@@ -41,7 +41,7 @@ from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
 from wheel5.tracking import ProbesInterface
 from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
-from wheel5.viz import draw_confusion_matrix, draw_heatmap
+from wheel5.viz import draw_confusion_matrix, draw_heatmap, HeatmapEntry, HeatmapModeColormap, HeatmapModeBloom
 
 Transform = Callable[[Img], Img]
 
@@ -490,7 +490,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         return figures
 
-    def introspect_grad_cam(self, batch, class_selector: str, inter_mode: str = 'bilinear') -> torch.Tensor:
+    def introspect_cam(self, batch, class_selector: str, mode='gradcampp', inter_mode: str = 'bilinear') -> torch.Tensor:
         layer = self.model.layer4
 
         x, y = batch
@@ -506,8 +506,14 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
             else:
                 raise AssertionError(f'Invalid class selector: {class_selector}')
 
-            with GradCAM(self.model, layer, score_fn) as grad_cam:
-                masks_list.append(grad_cam.generate(sample_x, inter_mode))
+            if mode == 'gradcam':
+                with GradCAM(self.model, layer, score_fn) as grad_cam:
+                    masks_list.append(grad_cam.generate(sample_x, inter_mode))
+            elif mode == 'gradcampp':
+                with GradCAMpp(self.model, layer, score_fn) as grad_cam:
+                    masks_list.append(grad_cam.generate(sample_x, inter_mode))
+            else:
+                raise AssertionError(f'Invalid CAM mode: {mode}')
 
         return torch.stack(masks_list)
 
@@ -595,12 +601,19 @@ def build_heatmap(dataset_config: Dict[str, str],
     y_class_hat = torch.argmax(y_probs_hat, dim=1)
 
     batch = (x, y)
-    mask = model.introspect_grad_cam(batch, class_selector='true', inter_mode='bilinear')
-    mask_hat = model.introspect_grad_cam(batch, class_selector='pred', inter_mode='bilinear')
+    mask = model.introspect_cam(batch, class_selector='true', inter_mode='bilinear')
+    mask_hat = model.introspect_cam(batch, class_selector='pred', inter_mode='bilinear')
 
     x_sample = torch.stack([model.sample_transform(x[i]) for i in range(0, samples)])
 
-    return draw_heatmap(x_sample, y, y_class_hat, mask, mask_hat, model.target_classes)
+    entries = [
+        HeatmapEntry('actual', y, mask, mode=HeatmapModeColormap()),
+        HeatmapEntry('predicted', y_class_hat, mask_hat, mode=HeatmapModeColormap()),
+        HeatmapEntry('actual', y, mask, mode=HeatmapModeBloom()),
+        HeatmapEntry('predicted', y_class_hat, mask_hat, mode=HeatmapModeBloom())
+    ]
+
+    return draw_heatmap(x_sample, entries, model.target_classes)
 
 
 def eval_blend(dataset_config: Dict[str, str],
