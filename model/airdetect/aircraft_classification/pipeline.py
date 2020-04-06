@@ -1,6 +1,9 @@
 import logging
 import os
 from collections import OrderedDict
+from dataclasses import dataclass, asdict
+from typing import Dict, Optional, Union, Tuple
+from typing import List, Callable
 
 import albumentations as albu
 import cv2
@@ -8,12 +11,9 @@ import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-import wheel5.transforms.albumentations as albu_ext
-import wheel5.transforms.torchvision as torchviz_ext
 from PIL import Image
 from PIL.Image import Image as Img
 from dacite import from_dict
-from dataclasses import dataclass, asdict
 from matplotlib.figure import Figure
 from numpy.random.mtrand import RandomState
 from pytorch_lightning import Trainer
@@ -29,11 +29,12 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import Subset, DataLoader, Dataset
 from torchvision import transforms
 from tqdm import tqdm
-from typing import Dict, Optional, Union, Tuple
-from typing import List, Callable
+
+import wheel5.transforms.albumentations as albu_ext
+import wheel5.transforms.torchvision as torchviz_ext
+from airdetect.aircraft_classification.util import check_flag
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, targets, LMDBImageDataset
 from wheel5.dataset.functional import class_distribution
-from wheel5.interpret.gradcam import GradCAM, GradCAMpp, logit_to_score
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.metering import ReservoirSamplingMeter, ArrayAccumMeter
 from wheel5.metrics import ExactMatchAccuracy, DiceAccuracy
@@ -41,6 +42,8 @@ from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
 from wheel5.tracking import ProbesInterface
 from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
+from wheel5.tricks.gradcam import GradCAM, GradCAMpp, logit_to_score
+from wheel5.tricks.moments import moex
 from wheel5.viz import draw_confusion_matrix, draw_heatmap, HeatmapEntry, HeatmapModeColormap, HeatmapModeBloom
 
 Transform = Callable[[Img], Img]
@@ -257,12 +260,12 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         train_dataset = ImageOneHotDataset(train_root_dataset, self.num_classes)
 
         train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_pre_cutmix)
-        if self.config.kv['x_cut'] > 0.5:
+        if check_flag(self.config.kv, 'x_cut'):
             cutmix_alpha = self.config.kv['x_cut_a']
             train_dataset = ImageCutMixDataset(train_dataset, alpha=cutmix_alpha, name='train')
 
         train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_pre_mixup)
-        if self.config.kv['x_mxp'] > 0.5:
+        if check_flag(self.config.kv, 'x_mxp'):
             mixup_alpha = self.config.kv['x_mxp_a']
             train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, name='train')
 
@@ -331,7 +334,25 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
     def training_step(self, batch, batch_idx) -> Dict:
         x, y = batch
 
-        z = self.forward(x)
+        if check_flag(self.config.kv, 'x_moex'):
+            moex_lambda = self.config.kv['x_moex_l']
+            moex_layer: nn.Module = self.model.layer1
+
+            perm = torch.randperm(x.shape[0], device=x.device)
+
+            def moex_hook(_: nn.Module, input: torch.Tensor) -> Optional[Tuple[torch.Tensor]]:
+                input, = input
+                return moex(input, perm),
+
+            moex_handle = moex_layer.register_forward_pre_hook(moex_hook)
+
+            z = self.forward(x)
+            y = y * (1 - moex_lambda) + y[perm] * moex_lambda
+
+            moex_handle.remove()
+        else:
+            z = self.forward(x)
+
         y_probs_hat = torch.exp(log_softmax(z, dim=1))
 
         loss = self.train_loss(z, y)
@@ -490,8 +511,9 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         return figures
 
-    def introspect_cam(self, batch, class_selector: str, mode='gradcampp', inter_mode: str = 'bilinear') -> torch.Tensor:
-        layer = self.model.layer4
+    def introspect_cam(self, batch, class_selector: str, layer=None, mode: str = 'gradcampp', inter_mode: str = 'bilinear') -> torch.Tensor:
+        if layer is None:
+            layer = self.model.layer4
 
         x, y = batch
         masks_list = []
