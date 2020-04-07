@@ -9,7 +9,8 @@ from typing import Dict
 from wheel5 import logutils
 from wheel5.tracking import Tracker, CheckpointPattern
 
-from .pipeline import AircraftClassificationConfig, fit_trial, eval_blend
+from .pipeline import AircraftClassificationConfig
+from .tools import fit_trial, eval_blend
 from .search import make_space_dict
 from ..util import launch_tensorboard, parse_kv, dump
 

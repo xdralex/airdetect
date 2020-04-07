@@ -1,8 +1,7 @@
 import logging
-import os
 from collections import OrderedDict
-from dataclasses import dataclass, asdict
-from typing import Dict, Optional, Union, Tuple
+from dataclasses import dataclass
+from typing import Dict, Optional, Tuple
 from typing import List, Callable
 
 import albumentations as albu
@@ -16,11 +15,6 @@ from PIL.Image import Image as Img
 from dacite import from_dict
 from matplotlib.figure import Figure
 from numpy.random.mtrand import RandomState
-from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint
-from pytorch_lightning.loggers import TensorBoardLogger
-# noinspection PyProtectedMember
-from pytorch_lightning.loggers import rank_zero_only
 from torch import nn
 from torch.nn import Parameter, CrossEntropyLoss
 from torch.nn.functional import log_softmax
@@ -28,7 +22,6 @@ from torch.optim.adamw import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import Subset, DataLoader, Dataset
 from torchvision import transforms
-from tqdm import tqdm
 
 import wheel5.transforms.albumentations as albu_ext
 import wheel5.transforms.torchvision as torchviz_ext
@@ -41,10 +34,9 @@ from wheel5.metrics import ExactMatchAccuracy, DiceAccuracy
 from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
 from wheel5.tracking import ProbesInterface
-from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
 from wheel5.tricks.gradcam import GradCAM, GradCAMpp, logit_to_score
 from wheel5.tricks.moments import moex
-from wheel5.viz import draw_confusion_matrix, draw_heatmap, HeatmapEntry, HeatmapModeColormap, HeatmapModeBloom
+from wheel5.viz import draw_confusion_matrix
 
 Transform = Callable[[Img], Img]
 
@@ -376,9 +368,9 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         y_probs_hat = torch.exp(log_softmax(z, dim=1))
         y_class_hat = torch.argmax(y_probs_hat, dim=1)
 
-        if dataloader_idx == 0:     # val_loader
+        if dataloader_idx == 0:  # val_loader
             prefix = 'val'
-        elif dataloader_idx == 1:   # train_orig_loader
+        elif dataloader_idx == 1:  # train_orig_loader
             prefix = 'train-orig'
         else:
             raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
@@ -402,9 +394,9 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         outputs_by_prefix['train'] = self.training_outputs
 
         for dataloader_idx, output in enumerate(outputs):
-            if dataloader_idx == 0:     # val_loader
+            if dataloader_idx == 0:  # val_loader
                 prefix = 'val'
-            elif dataloader_idx == 1:   # train_orig_loader
+            elif dataloader_idx == 1:  # train_orig_loader
                 prefix = 'train-orig'
             else:
                 raise AssertionError(f'Invalid dataloader index: {dataloader_idx}')
@@ -572,172 +564,3 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         with open(path, 'r') as f:
             lines = [line.strip() for line in f.readlines()]
             return [line for line in lines if line != '']
-
-
-class TensorboardHparamsLogger(TensorBoardLogger):
-    def __init__(self, save_dir: str, name: Optional[str] = "default", version: Optional[Union[int, str]] = None, **kwargs):
-        super(TensorboardHparamsLogger, self).__init__(save_dir, name, version, **kwargs)
-
-    @rank_zero_only
-    def log_hyperparams(self, params: Dict) -> None:
-        config = from_dict(AircraftClassificationConfig, params)
-        super(TensorboardHparamsLogger, self).log_hyperparams(config.kv)
-
-
-def build_heatmap(dataset_config: Dict[str, str],
-                  snapshot_path: str,
-                  device: int,
-                  samples: int) -> Figure:
-    device = torch.device(f'cuda:{device}')
-
-    model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=device)
-    model.to(device)
-    model.unfreeze()
-    model.eval()
-
-    dataset = model.load_dataset(dataset_config)
-    loader = model.prepare_eval_loader(dataset)
-
-    x_list = []
-    y_list = []
-    count = 0
-
-    for x, y in loader:
-        x = x.to(device)
-        y = y.to(device)
-
-        x_list.append(x)
-        y_list.append(y)
-
-        count += x.shape[0]
-        if count >= samples:
-            break
-
-    x = torch.cat(x_list)[0:samples]
-    y = torch.cat(y_list)[0:samples]
-
-    z = model.forward(x)
-    y_probs_hat = torch.exp(log_softmax(z, dim=1))
-    y_class_hat = torch.argmax(y_probs_hat, dim=1)
-
-    batch = (x, y)
-    mask = model.introspect_cam(batch, class_selector='true', inter_mode='bilinear')
-    mask_hat = model.introspect_cam(batch, class_selector='pred', inter_mode='bilinear')
-
-    x_sample = torch.stack([model.sample_transform(x[i]) for i in range(0, samples)])
-
-    entries = [
-        HeatmapEntry('actual', y, mask, mode=HeatmapModeColormap()),
-        HeatmapEntry('predicted', y_class_hat, mask_hat, mode=HeatmapModeColormap()),
-        HeatmapEntry('actual', y, mask, mode=HeatmapModeBloom()),
-        HeatmapEntry('predicted', y_class_hat, mask_hat, mode=HeatmapModeBloom())
-    ]
-
-    return draw_heatmap(x_sample, entries, model.target_classes)
-
-
-def eval_blend(dataset_config: Dict[str, str],
-               device: int,
-               snapshot_paths: List[str],
-               show_progress: bool = True) -> Dict[str, float]:
-    device = torch.device(f'cuda:{device}')
-
-    torch.set_printoptions(linewidth=250, edgeitems=10)
-
-    with torch.no_grad():
-        loader = None
-
-        y_only = None
-        y_probs_hat_list = []
-        for i, snapshot_path in enumerate(snapshot_paths):
-            model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=device)
-            model.to(device)
-            model.freeze()
-            model.eval()
-
-            if loader is None:
-                dataset = model.load_dataset(dataset_config)
-                loader = model.prepare_eval_loader(dataset)
-
-            z_list = []
-            y_list = []
-            with tqdm(total=len(loader), disable=not show_progress) as progress_bar:
-                progress_bar.set_description(f'Evaluating model {i + 1}')
-
-                for x, y in loader:
-                    x = x.to(device)
-                    y = y.to(device)
-
-                    z_list.append(model.forward(x))
-                    y_list.append(y)
-
-                    progress_bar.update()
-
-            z = torch.cat(z_list)
-            y = torch.cat(y_list)
-            y_probs_hat = torch.exp(log_softmax(z, dim=1))
-
-            y_probs_hat_list.append(y_probs_hat)
-            if y_only is None:
-                y_only = y
-            del model
-
-        y_probs_hat_stack = torch.stack(y_probs_hat_list, dim=0)
-        y_probs_hat_blend = torch.mean(y_probs_hat_stack, dim=0)
-        y_class_hat = torch.argmax(y_probs_hat_blend, dim=1)
-
-        model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_paths[0], map_location=device)
-        model.to(device)
-        model.freeze()
-        model.eval()
-
-        numer, denom = model.eval_accuracy(y_class_hat, y_only, 'test')
-        accuracy = float(numer) / float(denom)
-
-        return {
-            'acc': accuracy
-        }
-
-
-def fit_trial(tracker: Tracker,
-              snapshot_dir: str,
-              tensorboard_root: str,
-              experiment: str,
-              device: int,
-              config: AircraftClassificationConfig,
-              max_epochs: int) -> Dict[str, float]:
-
-    torch.set_printoptions(linewidth=250, edgeitems=10)
-
-    trial_tracker = tracker.new_trial(config.kv)
-    snapshot_trial = os.path.join(snapshot_dir, trial_tracker.trial)
-
-    pipeline = AircraftClassificationPipeline(hparams=asdict(config))
-    logger = TensorboardHparamsLogger(save_dir=tensorboard_root, name=experiment, version=trial_tracker.trial)
-
-    checkpoint_callback = ModelCheckpoint(filepath=CheckpointPattern.pattern(snapshot_trial), monitor='val_acc', mode='max', save_top_k=1)
-    early_stop_callback = False
-    tensorboard_callback = TensorboardLogging()
-    tracking_callback = StatisticsTracking(trial_tracker)
-
-    trainer = Trainer(logger=logger,
-                      checkpoint_callback=checkpoint_callback,
-                      early_stop_callback=early_stop_callback,
-                      callbacks=[tensorboard_callback, tracking_callback],
-                      gpus=[device],
-                      max_epochs=max_epochs,
-                      progress_bar_refresh_rate=1,
-                      num_sanity_val_steps=0)
-
-    trainer.fit(pipeline)
-
-    metrics_df = tracking_callback.metrics_df()
-
-    return {
-        'min_val_loss': metrics_df['val_loss'].min(),
-        'max_val_acc': metrics_df['val_acc'].max(),
-        'min_train_loss': metrics_df['train_loss'].min(),
-        'max_train_acc': metrics_df['train_acc'].max(),
-        'min_train-orig_loss': metrics_df['train-orig_loss'].min(),
-        'max_train-orig_acc': metrics_df['train-orig_acc'].max()
-    }
