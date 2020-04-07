@@ -516,28 +516,22 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
             layer = self.model.layer4
 
         x, y = batch
-        masks_list = []
-        for i in range(0, x.shape[0]):
-            sample_x = x[i:i + 1]
-            sample_y = y[i:i + 1]
 
-            if class_selector == 'pred':
-                score_fn = logit_to_score()
-            elif class_selector == 'true':
-                score_fn = logit_to_score(int(sample_y))
-            else:
-                raise AssertionError(f'Invalid class selector: {class_selector}')
+        if class_selector == 'pred':
+            score_fn = logit_to_score()
+        elif class_selector == 'true':
+            score_fn = logit_to_score(y)
+        else:
+            raise AssertionError(f'Invalid class selector: {class_selector}')
 
-            if mode == 'gradcam':
-                with GradCAM(self.model, layer, score_fn) as grad_cam:
-                    masks_list.append(grad_cam.generate(sample_x, inter_mode))
-            elif mode == 'gradcampp':
-                with GradCAMpp(self.model, layer, score_fn) as grad_cam:
-                    masks_list.append(grad_cam.generate(sample_x, inter_mode))
-            else:
-                raise AssertionError(f'Invalid CAM mode: {mode}')
-
-        return torch.stack(masks_list)
+        if mode == 'gradcam':
+            with GradCAM(self.model, layer, score_fn) as grad_cam:
+                return grad_cam.generate(x, inter_mode)
+        elif mode == 'gradcampp':
+            with GradCAMpp(self.model, layer, score_fn) as grad_cam:
+                return grad_cam.generate(x, inter_mode)
+        else:
+            raise AssertionError(f'Invalid CAM mode: {mode}')
 
     def get_tqdm_dict(self):
         d = dict(super(AircraftClassificationPipeline, self).get_tqdm_dict())
@@ -594,9 +588,10 @@ def build_heatmap(dataset_config: Dict[str, str],
                   snapshot_path: str,
                   device: int,
                   samples: int) -> Figure:
+    device = torch.device(f'cuda:{device}')
 
-    model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=torch.device(f'cuda:{device}'))
-
+    model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=device)
+    model.to(device)
     model.unfreeze()
     model.eval()
 
@@ -608,6 +603,9 @@ def build_heatmap(dataset_config: Dict[str, str],
     count = 0
 
     for x, y in loader:
+        x = x.to(device)
+        y = y.to(device)
+
         x_list.append(x)
         y_list.append(y)
 
@@ -642,6 +640,7 @@ def eval_blend(dataset_config: Dict[str, str],
                device: int,
                snapshot_paths: List[str],
                show_progress: bool = True) -> Dict[str, float]:
+    device = torch.device(f'cuda:{device}')
 
     torch.set_printoptions(linewidth=250, edgeitems=10)
 
@@ -651,8 +650,10 @@ def eval_blend(dataset_config: Dict[str, str],
         y_only = None
         y_probs_hat_list = []
         for i, snapshot_path in enumerate(snapshot_paths):
-            model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=torch.device(f'cuda:{device}'))
+            model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=device)
+            model.to(device)
             model.freeze()
+            model.eval()
 
             if loader is None:
                 dataset = model.load_dataset(dataset_config)
@@ -664,6 +665,9 @@ def eval_blend(dataset_config: Dict[str, str],
                 progress_bar.set_description(f'Evaluating model {i + 1}')
 
                 for x, y in loader:
+                    x = x.to(device)
+                    y = y.to(device)
+
                     z_list.append(model.forward(x))
                     y_list.append(y)
 
@@ -682,7 +686,10 @@ def eval_blend(dataset_config: Dict[str, str],
         y_probs_hat_blend = torch.mean(y_probs_hat_stack, dim=0)
         y_class_hat = torch.argmax(y_probs_hat_blend, dim=1)
 
-        model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_paths[0], map_location=torch.device(f'cuda:{device}'))
+        model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_paths[0], map_location=device)
+        model.to(device)
+        model.freeze()
+        model.eval()
 
         numer, denom = model.eval_accuracy(y_class_hat, y_only, 'test')
         accuracy = float(numer) / float(denom)
