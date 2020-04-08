@@ -59,8 +59,8 @@ class AircraftClassificationConfig:
     val_split: float = 0.2
     train_sample: float = 0.25
 
-    train_batch: int = 32
-    train_workers: int = 4
+    train_batch: int = 32   # TODO: grad_batch
+    train_workers: int = 4  # TODO: grad_workers
     eval_batch: int = 256
     eval_workers: int = 4
 
@@ -293,6 +293,15 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
     def load_dataset(self, dataset_config: Dict[str, str]):
         return self._load_dataset(dataset_config, self.target_classes, self.store_transform)
 
+    def prepare_grad_loader(self, dataset: Dataset):
+        dataset = AlbumentationsDataset(dataset, self.eval_transform)
+        dataset = TransformDataset(dataset, self.model_transform)
+
+        return DataLoader(dataset,
+                          batch_size=self.config.train_batch,
+                          num_workers=self.config.train_workers,
+                          pin_memory=True)
+
     def prepare_eval_loader(self, dataset: Dataset):
         dataset = AlbumentationsDataset(dataset, self.eval_transform)
         dataset = TransformDataset(dataset, self.model_transform)
@@ -503,7 +512,11 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         return figures
 
-    def introspect_cam(self, batch, class_selector: str, layer=None, mode: str = 'gradcampp', inter_mode: str = 'bilinear') -> torch.Tensor:
+    def introspect_cam(self, batch,
+                       class_selector: str,
+                       layer: Optional[nn.Module] = None,
+                       cam_generator: str = 'gradcampp',
+                       inter_mode: Optional[str] = None) -> torch.Tensor:
         if layer is None:
             layer = self.model.layer4
 
@@ -516,14 +529,14 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         else:
             raise AssertionError(f'Invalid class selector: {class_selector}')
 
-        if mode == 'gradcam':
+        if cam_generator == 'gradcam':
             with GradCAM(self.model, layer, score_fn) as grad_cam:
                 return grad_cam.generate(x, inter_mode)
-        elif mode == 'gradcampp':
+        elif cam_generator == 'gradcampp':
             with GradCAMpp(self.model, layer, score_fn) as grad_cam:
                 return grad_cam.generate(x, inter_mode)
         else:
-            raise AssertionError(f'Invalid CAM mode: {mode}')
+            raise AssertionError(f'Invalid CAM mode: {cam_generator}')
 
     def get_tqdm_dict(self):
         d = dict(super(AircraftClassificationPipeline, self).get_tqdm_dict())

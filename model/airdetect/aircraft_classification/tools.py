@@ -12,11 +12,11 @@ from matplotlib.figure import Figure
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import TensorBoardLogger
-# noinspection PyProtectedMember
 from pytorch_lightning.loggers import rank_zero_only
 from torch.nn.functional import log_softmax
 from tqdm import tqdm
 
+from wheel5.dataset import NdArrayStorage
 from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
 from wheel5.viz import draw_heatmap, HeatmapEntry, HeatmapModeColormap, HeatmapModeBloom
 from .pipeline import AircraftClassificationConfig, AircraftClassificationPipeline
@@ -37,7 +37,8 @@ class TensorboardHparamsLogger(TensorBoardLogger):
 def visualize_heatmap(dataset_config: Dict[str, str],
                       snapshot_path: str,
                       device: int,
-                      samples: int) -> Figure:
+                      samples: int,
+                      inter_mode: str = 'bilinear') -> Figure:
     device = torch.device(f'cuda:{device}')
 
     model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=device)
@@ -46,7 +47,7 @@ def visualize_heatmap(dataset_config: Dict[str, str],
     model.eval()
 
     dataset = model.load_dataset(dataset_config)
-    loader = model.prepare_eval_loader(dataset)
+    loader = model.prepare_grad_loader(dataset)
 
     x_list = []
     y_list = []
@@ -71,8 +72,8 @@ def visualize_heatmap(dataset_config: Dict[str, str],
     y_class_hat = torch.argmax(y_probs_hat, dim=1)
 
     batch = (x, y)
-    mask = model.introspect_cam(batch, class_selector='true', inter_mode='bilinear')
-    mask_hat = model.introspect_cam(batch, class_selector='pred', inter_mode='bilinear')
+    mask = model.introspect_cam(batch, class_selector='true', inter_mode=inter_mode)
+    mask_hat = model.introspect_cam(batch, class_selector='pred', inter_mode=inter_mode)
 
     x_sample = torch.stack([model.sample_transform(x[i]) for i in range(0, samples)])
 
@@ -84,6 +85,48 @@ def visualize_heatmap(dataset_config: Dict[str, str],
     ]
 
     return draw_heatmap(x_sample, entries, model.target_classes)
+
+
+def build_heatmaps(dataset_config: Dict[str, str],
+                   snapshot_path: str,
+                   heatmap_path: str,
+                   device: int,
+                   show_progress: bool = True):
+    device = torch.device(f'cuda:{device}')
+
+    model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=device)
+    model.to(device)
+    model.unfreeze()
+    model.eval()
+
+    dataset = model.load_dataset(dataset_config)
+    loader = model.prepare_grad_loader(dataset)
+
+    heatmaps = {}
+    with tqdm(total=len(loader), disable=not show_progress) as progress_bar:
+        progress_bar.set_description(f'Building heatmaps')
+
+        for x, y, indices in loader:
+            x = x.to(device)
+            y = y.to(device)
+
+            batch = (x, y)
+            mask = model.introspect_cam(batch, class_selector='true')
+
+            assert indices.shape[0] == mask.shape[0]
+            mask = mask.cpu().numpy()
+
+            for i in range(0, indices.shape[0]):
+                index = int(indices[i])
+                heatmaps[str(index)] = mask[i]
+
+            progress_bar.update()
+
+    for i in range(0, len(heatmaps)):
+        assert str(i) in heatmaps
+
+    storage = NdArrayStorage(heatmaps)
+    storage.save(heatmap_path)
 
 
 def eval_blend(dataset_config: Dict[str, str],

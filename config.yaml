@@ -3,6 +3,7 @@ tracking:
   tensorboard_root: /data/ssd/run/airdetect/tensorboard
   tracker_root: /data/ssd/run/airdetect/tracker
 
+
 datasets:
   train:
     metadata: /data/ssd/datasets/airdetect/train.csv
@@ -23,6 +24,11 @@ datasets:
     lmdb_dir: /data/nvme/run/airdetect/lmdb/private_test
 
   classes: /data/ssd/datasets/airdetect/classes
+
+
+boost:
+  heatmaps:
+    train: /data/nvme/run/airdetect/boost/heatmaps/train
 
 
 viz:

@@ -12,6 +12,7 @@ from typing import Optional
 from airdetect.aircraft_classification import cli_eval as cls_eval
 from airdetect.aircraft_classification import cli_search as cls_search
 from airdetect.aircraft_classification import cli_trial as cls_trial
+from airdetect.aircraft_classification import cli_build_heatmaps as cls_build_heatmaps
 from airdetect.util import dump, launch_tensorboard
 from wheel5 import logutils
 from wheel5.introspection import introspect, make_dot
@@ -95,7 +96,7 @@ def cli_list_experiments():
 @click.option('--top', 'top', default=10, type=int, help='number of top trials to show (default: 10')
 @click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
 @click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
-@click.option('--hide', 'hide', default='experiment,trial', type=str, help='columns to hide')
+@click.option('--hide', 'hide', default='experiment,trial,lr_f,lr_t0,lr_w', type=str, help='columns to hide')
 @click.option('--incomplete', 'incomplete', is_flag=True, help='load incomplete trials')
 def cli_list_trials(experiment: str, top: int, metric_name: str, order: str, hide: str, incomplete: bool):
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
@@ -113,7 +114,10 @@ def cli_list_trials(experiment: str, top: int, metric_name: str, order: str, hid
         drop_cols = [col.strip() for col in hide.split(',') if col.strip() != '']
         df_best = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
         df_best = df_best.head(top)
-        print(f'Best results by trial: \n\n{dump(df_best, drop_cols=drop_cols)}\n\n\n')
+        df_best.insert(0, 'n', range(0, len(df_best)))
+
+        df_best_dump = dump(df_best, drop_cols=drop_cols)
+        print(f'Best {top} results: \n\n{df_best_dump}\n\n\n')
 
 
 @click.command(name='dump-trial')
@@ -159,6 +163,7 @@ if __name__ == "__main__":
     cli.add_command(click.command(name='cls-trial')(cls_trial))
     cli.add_command(click.command(name='cls-search')(cls_search))
     cli.add_command(click.command(name='cls-eval')(cls_eval))
+    cli.add_command(click.command(name='cls-build-heatmaps')(cls_build_heatmaps))
 
     cli.add_command(cli_introspect_nn)
 

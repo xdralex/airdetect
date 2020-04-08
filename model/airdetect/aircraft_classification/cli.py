@@ -10,7 +10,7 @@ from wheel5 import logutils
 from wheel5.tracking import Tracker, CheckpointPattern
 
 from .pipeline import AircraftClassificationConfig
-from .tools import fit_trial, eval_blend
+from .tools import fit_trial, eval_blend, build_heatmaps
 from .search import make_space_dict
 from ..util import launch_tensorboard, parse_kv, dump
 
@@ -124,7 +124,7 @@ def cli_search(experiment: str, device: int, repo: str, network: str, rnd_seed: 
 @click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
 @click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
 @click.option('--test', 'test', default='public', type=click.Choice(['public', 'private']), help='public/private test dataset')
-@click.option('--hide', 'hide', default='experiment,trial', type=str, help='columns to hide')
+@click.option('--hide', 'hide', default='experiment,trial,lr_f,lr_t0,lr_w', type=str, help='columns to hide')
 @click.option('--incomplete', 'incomplete', is_flag=True, help='load incomplete trials')
 def cli_eval(experiment: str, device: int, top: int, metric_name: str, order: str, test: str, hide: str, incomplete: bool):
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
@@ -144,7 +144,10 @@ def cli_eval(experiment: str, device: int, top: int, metric_name: str, order: st
         drop_cols = [col.strip() for col in hide.split(',') if col.strip() != '']
         df_best = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
         df_best = df_best.head(top)
-        print(f'Evaluating top models on the >>{test}<< test dataset: \n\n{dump(df_best, drop_cols=drop_cols)}\n\n\n')
+        df_best.insert(0, 'n', range(0, len(df_best)))
+
+        df_best_dump = dump(df_best, drop_cols=drop_cols)
+        print(f'Evaluating blend of top {top} models on the >>{test}<< test dataset: \n\n{df_best_dump}\n\n\n')
 
         snapshot_dir = os.path.join(snapshot_root, experiment)
 
@@ -158,3 +161,45 @@ def cli_eval(experiment: str, device: int, top: int, metric_name: str, order: st
         print()
         for k, v in results.items():
             print(f'{k} = {v:.5f}')
+
+
+@click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
+@click.option('-d', '--device', 'device', default='0', help='device number (0, 1, ...)', type=int)
+@click.option('--top', 'top', default=1, help='number of top models to use', type=int)
+@click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
+@click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
+@click.option('--index', 'index', default=0, type=int, help='model index (0, 1, ...)')
+@click.option('--hide', 'hide', default='experiment,trial,lr_f,lr_t0,lr_w', type=str, help='columns to hide')
+@click.option('--incomplete', 'incomplete', is_flag=True, help='load incomplete trials')
+def cli_build_heatmaps(experiment: str, device: int, top: int, metric_name: str, order: str, index: int, hide: str, incomplete: bool):
+    def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
+        return df.sort_values(by=metric_name, ascending=(order == 'asc'))
+
+    with open('config.yaml', 'r') as config_file:
+        config = yaml.load(config_file, Loader=yaml.Loader)
+
+    snapshot_root = config['tracking']['snapshot_root']
+    tracker_root = config['tracking']['tracker_root']
+
+    df_res = Tracker.load_trial_stats(tracker_root, experiment, complete_only=not incomplete)
+
+    if df_res is None:
+        print('No completed trials found')
+    else:
+        drop_cols = [col.strip() for col in hide.split(',') if col.strip() != '']
+        df_best = metric_sort(df_res.groupby(['experiment', 'trial']).apply(lambda df: metric_sort(df).head(1)).reset_index(drop=True))
+        df_best = df_best.head(top)
+        df_best.insert(0, 'n', range(0, len(df_best)))
+
+        df_best_dump = dump(df_best, drop_cols=drop_cols)
+        print(f'Top {top} models: \n\n{df_best_dump}\n\n\n')
+
+        snapshot_dir = os.path.join(snapshot_root, experiment)
+        entry = list(df_best.itertuples())[index]
+        snapshot_path = CheckpointPattern.path(os.path.join(snapshot_dir, entry.trial), entry.epoch)
+
+        print(f'Using trial [{index}]: {entry.trial}')
+        build_heatmaps(dataset_config=config['datasets'][f'train'],
+                       snapshot_path=snapshot_path,
+                       heatmap_path=config['boost']['heatmaps']['train'],
+                       device=device)
