@@ -19,10 +19,15 @@ from ..util import launch_tensorboard, parse_kv, dump
 @click.option('-d', '--device', 'device', default='0', help='device number (0, 1, ...)', type=int)
 @click.option('-r', '--repo', 'repo', default='pytorch/vision:v0.4.2', help='repository (e.g. pytorch/vision:v0.4.2)', type=str)
 @click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
+@click.option('--train-wrk', 'train_workers', default=4, help='number of train dataloader workers', type=int)
+@click.option('--eval-wrk', 'eval_workers', default=4, help='number of eval dataloader workers', type=int)
 @click.option('--rnd-seed', 'rnd_seed', default=42, help='random seed', type=int)
 @click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
 @click.option('--kv', 'kv', default='', help='key-value parameters (k1=v1,k2=v2,...)', type=str)
-def cli_trial(experiment: str, device: int, repo: str, network: str, rnd_seed: int, max_epochs: int, kv: str):
+def cli_trial(experiment: str, device: int, repo: str, network: str,
+              train_workers: int, eval_workers: int,
+              rnd_seed: int, max_epochs: int, kv: str):
+
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
@@ -47,7 +52,10 @@ def cli_trial(experiment: str, device: int, repo: str, network: str, rnd_seed: i
         repo=repo,
         network=network,
 
-        kv=parse_kv(kv)
+        kv=parse_kv(kv),
+
+        train_workers=train_workers,
+        eval_workers=eval_workers
     )
 
     print(f'\n{Tracker.dict_to_key(pipeline_config.kv)}')
@@ -70,11 +78,16 @@ def cli_trial(experiment: str, device: int, repo: str, network: str, rnd_seed: i
 @click.option('-d', '--device', 'device', default='0', help='device number (0, 1, ...)', type=int)
 @click.option('-r', '--repo', 'repo', default='pytorch/vision:v0.4.2', help='repository (e.g. pytorch/vision:v0.4.2)', type=str)
 @click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
+@click.option('--train-wrk', 'train_workers', default=4, help='number of train dataloader workers', type=int)
+@click.option('--eval-wrk', 'eval_workers', default=4, help='number of eval dataloader workers', type=int)
 @click.option('--rnd-seed', 'rnd_seed', default=42, help='random seed', type=int)
 @click.option('--space', 'space', required=True, help='search space name', type=str)
 @click.option('--trials', 'trials', required=True, help='number of trials to perform', type=int)
 @click.option('--max-epochs', 'max_epochs', required=True, help='max number of epochs', type=int)
-def cli_search(experiment: str, device: int, repo: str, network: str, rnd_seed: int, space: str, trials: int, max_epochs: int):
+def cli_search(experiment: str, device: int, repo: str, network: str,
+               train_workers: int, eval_workers: int,
+               rnd_seed: int, space: str, trials: int, max_epochs: int):
+
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
         logutils.configure_logging(config['logging'])
@@ -100,7 +113,10 @@ def cli_search(experiment: str, device: int, repo: str, network: str, rnd_seed: 
             repo=repo,
             network=network,
 
-            kv=kv
+            kv=kv,
+
+            train_workers=train_workers,
+            eval_workers=eval_workers
         )
 
         print(f'\n{Tracker.dict_to_key(pipeline_config.kv)}')

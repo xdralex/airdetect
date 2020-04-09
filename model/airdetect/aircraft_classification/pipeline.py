@@ -178,7 +178,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         #
         # Dataset loading
         #
-        fit_dataset = self.load_dataset(self.config.dataset_config)
+        fit_dataset = self.load_dataset(self.config.dataset_config, name='fit')
 
         #
         # Split into train/validation
@@ -195,25 +195,25 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         #
         # Train datasets
         #
-        train_dataset = ImageOneHotDataset(train_root_dataset, self.num_classes)
+        train_dataset = ImageOneHotDataset(train_root_dataset, self.num_classes, name='train-one_hot')
 
         if check_flag(self.config.kv, 'x_cut'):
             cutoff_ratio = self.config.kv['x_cut_a']
 
             heatmaps = NdArrayStorage.load(self.config.heatmaps_path)
-            train_dataset = ImageHeatmapDataset(train_dataset, heatmaps, inter_mode='bilinear')
-            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True)
-            train_dataset = ImageSelectionMaskDataset(train_dataset, cutoff_ratio)
+            train_dataset = ImageHeatmapDataset(train_dataset, heatmaps, inter_mode='bilinear', name='train-heatmap')
+            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True, name='train-mix')
+            train_dataset = ImageSelectionMaskDataset(train_dataset, cutoff_ratio, name='train-mask')
             train_dataset = ImageMaskedCutMixDataset(train_dataset, name='train-cutmix')
         else:
-            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True)
+            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True, name='train-mix')
 
         if check_flag(self.config.kv, 'x_mxp'):
             mixup_alpha = self.config.kv['x_mxp_a']
             train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, name='train-mixup')
 
-        train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_final)
-        train_dataset = TransformDataset(train_dataset, self.model_transform)
+        train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_final, name='train-final')
+        train_dataset = TransformDataset(train_dataset, self.model_transform, name='train-model')
 
         train_root_indices = list(range(0, len(train_root_dataset)))
         train_sample_size = int(len(train_root_indices) * self.config.train_sample)
@@ -231,8 +231,8 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
                                        num_workers=self.config.train_workers,
                                        pin_memory=True,
                                        shuffle=True)
-        self.train_orig_loader = self.prepare_eval_loader(train_orig_dataset)
-        self.val_loader = self.prepare_eval_loader(val_dataset)
+        self.train_orig_loader = self.prepare_eval_loader(train_orig_dataset, name='train_orig')
+        self.val_loader = self.prepare_eval_loader(val_dataset, name='val')
 
         #
         # Model adjustment
@@ -293,21 +293,21 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         init_param_groups()
         return prepare_params()
 
-    def load_dataset(self, dataset_config: Dict[str, str]):
-        return self._load_dataset(dataset_config, self.target_classes, self.store_transform)
+    def load_dataset(self, dataset_config: Dict[str, str], name: str = ''):
+        return self._load_dataset(dataset_config, self.target_classes, self.store_transform, name)
 
-    def prepare_grad_loader(self, dataset: Dataset):
-        dataset = AlbumentationsDataset(dataset, self.eval_transform)
-        dataset = TransformDataset(dataset, self.model_transform)
+    def prepare_grad_loader(self, dataset: Dataset, name: str = ''):
+        dataset = AlbumentationsDataset(dataset, self.eval_transform, name=f'{name}-eval')
+        dataset = TransformDataset(dataset, self.model_transform, name=f'{name}-model')
 
         return DataLoader(dataset,
                           batch_size=self.config.train_batch,
                           num_workers=self.config.train_workers,
                           pin_memory=True)
 
-    def prepare_eval_loader(self, dataset: Dataset):
-        dataset = AlbumentationsDataset(dataset, self.eval_transform)
-        dataset = TransformDataset(dataset, self.model_transform)
+    def prepare_eval_loader(self, dataset: Dataset, name: str = ''):
+        dataset = AlbumentationsDataset(dataset, self.eval_transform, name=f'{name}-eval')
+        dataset = TransformDataset(dataset, self.model_transform, name=f'{name}-model')
 
         return DataLoader(dataset,
                           batch_size=self.config.eval_batch,
@@ -560,7 +560,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         return d
 
     @staticmethod
-    def _load_dataset(config: Dict[str, str], target_classes: List[str], store_transform: Optional[Transform] = None) -> LMDBImageDataset:
+    def _load_dataset(config: Dict[str, str], target_classes: List[str], store_transform: Optional[Transform] = None, name: str = '') -> LMDBImageDataset:
         metadata = config['metadata']
         annotations = config['annotations']
         image_dir = config['image_dir']
@@ -584,7 +584,8 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         dataset = LMDBImageDataset.cached(df_metadata,
                                           image_dir=image_dir,
                                           lmdb_path=lmdb_dir,
-                                          transform=store_transform)
+                                          transform=store_transform,
+                                          name=name)
 
         return dataset
 

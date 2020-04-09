@@ -83,15 +83,17 @@ logging:
   loggers:
     airdetect:
       level: INFO
-      handlers: [airdetect_handler, root_handler, console_handler]
+      handlers: [airdetect_handler]
 
     wheel5:
       level: INFO
-      handlers: [wheel5_handler, root_handler, console_handler]
+      handlers: [wheel5_handler]
+
+    wheel5.dataset:
+      level: DEBUG
 
     wheel5.metrics:
-      level: DEBUG
+      level: INFO
 
     werkzeug:
       level: WARNING
-      handlers: [root_handler, console_handler]
