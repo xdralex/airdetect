@@ -23,10 +23,10 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import Subset, DataLoader, Dataset
 from torchvision import transforms
 
-import wheel5.transforms.albumentations as albu_ext
 import wheel5.transforms.torchvision as torchviz_ext
 from airdetect.aircraft_classification.util import check_flag
-from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageCutMixDataset, ImageMixupDataset, targets, LMDBImageDataset
+from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageMixupDataset, targets, LMDBImageDataset, \
+    NdArrayStorage, ImageHeatmapDataset, ImageSelectionMaskDataset, ImageMaskedCutMixDataset
 from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.metering import ReservoirSamplingMeter, ArrayAccumMeter
@@ -35,6 +35,7 @@ from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
 from wheel5.tracking import ProbesInterface
 from wheel5.tricks.gradcam import GradCAM, GradCAMpp, logit_to_score
+from wheel5.tricks.heatmap import normalize_heatmap, upsample_heatmap, heatmap_to_selection_mask
 from wheel5.tricks.moments import moex
 from wheel5.viz import draw_confusion_matrix
 
@@ -47,6 +48,7 @@ class AircraftClassificationConfig:
 
     classes_path: str
     dataset_config: Dict[str, str]
+    heatmaps_path: Optional[str]
 
     repo: str
     network: str
@@ -125,16 +127,11 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         mean_color = tuple([int(round(c * 255)) for c in normalize_mean])
 
         self.store_transform = transforms.Compose([
-            torchviz_ext.Rescale(scale=0.5, interpolation=Image.LANCZOS)
+            torchviz_ext.Rescale(scale=0.5, interpolation=Image.LANCZOS),
+            torchviz_ext.PadToSquare(fill=mean_color)
         ])
 
-        self.train_transform_pre_cutmix = albu.Compose([
-            albu.HueSaturationValue(hue_shift_limit=30, sat_shift_limit=30, val_shift_limit=30, p=1.0),
-            albu.HorizontalFlip(p=0.5)
-        ])
-
-        self.train_transform_pre_mixup = albu.Compose([
-            albu_ext.PadToSquare(fill=mean_color),
+        self.train_transform_mix = albu.Compose([
             albu.ShiftScaleRotate(shift_limit=0.1,
                                   scale_limit=(-0.25, 0.15),
                                   rotate_limit=20,
@@ -142,7 +139,9 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
                                   value=mean_color,
                                   interpolation=cv2.INTER_AREA,
                                   p=1.0),
-            albu_ext.Resize(height=224, width=224, interpolation=cv2.INTER_AREA),
+            albu.Resize(height=224, width=224, interpolation=cv2.INTER_AREA),
+            albu.HorizontalFlip(p=0.5),
+            albu.HueSaturationValue(hue_shift_limit=30, sat_shift_limit=30, val_shift_limit=30, p=1.0)
         ])
 
         self.train_transform_final = albu.Compose([
@@ -158,8 +157,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         ])
 
         self.eval_transform = albu.Compose([
-            albu_ext.PadToSquare(fill=mean_color),
-            albu_ext.Resize(height=224, width=224, interpolation=cv2.INTER_AREA)
+            albu.Resize(height=224, width=224, interpolation=cv2.INTER_AREA)
         ])
 
         self.model_transform = transforms.Compose([
@@ -175,6 +173,73 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         self.train_loader = None
         self.train_orig_loader = None
         self.val_loader = None
+
+    def prepare_data(self):
+        #
+        # Dataset loading
+        #
+        fit_dataset = self.load_dataset(self.config.dataset_config)
+
+        #
+        # Split into train/validation
+        #
+        fit_indices = list(range(0, len(fit_dataset)))
+        self.random_state.shuffle(fit_indices)
+
+        val_divider = int(np.round(self.config.val_split * len(fit_indices)))
+        train_root_dataset = Subset(fit_dataset, fit_indices[val_divider:])
+        val_dataset = Subset(fit_dataset, fit_indices[:val_divider])
+
+        self.journal.info(f'Datasets: train_root[{len(train_root_dataset)}], val[{len(val_dataset)}]')
+
+        #
+        # Train datasets
+        #
+        train_dataset = ImageOneHotDataset(train_root_dataset, self.num_classes)
+
+        if check_flag(self.config.kv, 'x_cut'):
+            cutoff_ratio = self.config.kv['x_cut_a']
+
+            heatmaps = NdArrayStorage.load(self.config.heatmaps_path)
+            train_dataset = ImageHeatmapDataset(train_dataset, heatmaps, inter_mode='bilinear')
+            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True)
+            train_dataset = ImageSelectionMaskDataset(train_dataset, cutoff_ratio)
+            train_dataset = ImageMaskedCutMixDataset(train_dataset, name='train-cutmix')
+        else:
+            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True)
+
+        if check_flag(self.config.kv, 'x_mxp'):
+            mixup_alpha = self.config.kv['x_mxp_a']
+            train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, name='train-mixup')
+
+        train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_final)
+        train_dataset = TransformDataset(train_dataset, self.model_transform)
+
+        train_root_indices = list(range(0, len(train_root_dataset)))
+        train_sample_size = int(len(train_root_indices) * self.config.train_sample)
+        train_sample_indices = self.random_state.choice(train_root_indices, size=train_sample_size, replace=False)
+
+        train_orig_dataset = Subset(train_root_dataset, train_sample_indices)
+
+        self.journal.info(f'Datasets: train[{len(train_dataset)}], train-orig[{len(train_orig_dataset)}]')
+
+        #
+        # Loaders
+        #
+        self.train_loader = DataLoader(train_dataset,
+                                       batch_size=self.config.train_batch,
+                                       num_workers=self.config.train_workers,
+                                       pin_memory=True,
+                                       shuffle=True)
+        self.train_orig_loader = self.prepare_eval_loader(train_orig_dataset)
+        self.val_loader = self.prepare_eval_loader(val_dataset)
+
+        #
+        # Model adjustment
+        #
+        train_targets = targets(train_root_dataset)
+        target_probs = class_distribution(train_targets, self.num_classes)
+        init_softmax_logits(self.model.fc.bias, torch.from_numpy(target_probs))
 
     def adjust_model_params(self):
         param_groups = {
@@ -228,68 +293,6 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         init_param_groups()
         return prepare_params()
 
-    def prepare_data(self):
-        #
-        # Dataset loading
-        #
-        fit_dataset = self.load_dataset(self.config.dataset_config)
-
-        #
-        # Split into train/validation
-        #
-        fit_indices = list(range(0, len(fit_dataset)))
-        self.random_state.shuffle(fit_indices)
-
-        val_divider = int(np.round(self.config.val_split * len(fit_indices)))
-        train_root_dataset = Subset(fit_dataset, fit_indices[val_divider:])
-        val_dataset = Subset(fit_dataset, fit_indices[:val_divider])
-
-        self.journal.info(f'Datasets: train_root[{len(train_root_dataset)}], val[{len(val_dataset)}]')
-
-        #
-        # Train datasets
-        #
-        train_dataset = ImageOneHotDataset(train_root_dataset, self.num_classes)
-
-        train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_pre_cutmix)
-        if check_flag(self.config.kv, 'x_cut'):
-            cutmix_alpha = self.config.kv['x_cut_a']
-            train_dataset = ImageCutMixDataset(train_dataset, alpha=cutmix_alpha, name='train')
-
-        train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_pre_mixup)
-        if check_flag(self.config.kv, 'x_mxp'):
-            mixup_alpha = self.config.kv['x_mxp_a']
-            train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, name='train')
-
-        train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_final)
-        train_dataset = TransformDataset(train_dataset, self.model_transform)
-
-        train_root_indices = list(range(0, len(train_root_dataset)))
-        train_sample_size = int(len(train_root_indices) * self.config.train_sample)
-        train_sample_indices = self.random_state.choice(train_root_indices, size=train_sample_size, replace=False)
-
-        train_orig_dataset = Subset(train_root_dataset, train_sample_indices)
-
-        self.journal.info(f'Datasets: train[{len(train_dataset)}], train-orig[{len(train_orig_dataset)}]')
-
-        #
-        # Loaders
-        #
-        self.train_loader = DataLoader(train_dataset,
-                                       batch_size=self.config.train_batch,
-                                       num_workers=self.config.train_workers,
-                                       pin_memory=True,
-                                       shuffle=True)
-        self.train_orig_loader = self.prepare_eval_loader(train_orig_dataset)
-        self.val_loader = self.prepare_eval_loader(val_dataset)
-
-        #
-        # Model adjustment
-        #
-        train_targets = targets(train_root_dataset)
-        target_probs = class_distribution(train_targets, self.num_classes)
-        init_softmax_logits(self.model.fc.bias, torch.from_numpy(target_probs))
-
     def load_dataset(self, dataset_config: Dict[str, str]):
         return self._load_dataset(dataset_config, self.target_classes, self.store_transform)
 
@@ -333,7 +336,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         return self.model(x)
 
     def training_step(self, batch, batch_idx) -> Dict:
-        x, y = batch
+        x, y, *_ = batch
 
         if check_flag(self.config.kv, 'x_moex'):
             moex_lambda = self.config.kv['x_moex_l']
@@ -371,7 +374,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         return {'loss': loss}
 
     def validation_step(self, batch, batch_idx: int, dataloader_idx: int) -> Dict:
-        x, y = batch
+        x, y, *_ = batch
 
         z = self.forward(x)
         y_probs_hat = torch.exp(log_softmax(z, dim=1))
@@ -512,15 +515,18 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         return figures
 
-    def introspect_cam(self, batch,
+    def introspect_cam(self,
+                       batch,
                        class_selector: str,
                        layer: Optional[nn.Module] = None,
                        cam_generator: str = 'gradcampp',
-                       inter_mode: Optional[str] = None) -> torch.Tensor:
+                       inter_mode: Optional[str] = None,
+                       cutoff_ratio: Optional[float] = None) -> torch.Tensor:
         if layer is None:
             layer = self.model.layer4
 
-        x, y = batch
+        x, y, *_ = batch
+        _, _, h, w = x.shape
 
         if class_selector == 'pred':
             score_fn = logit_to_score()
@@ -531,12 +537,22 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         if cam_generator == 'gradcam':
             with GradCAM(self.model, layer, score_fn) as grad_cam:
-                return grad_cam.generate(x, inter_mode)
+                heatmap = grad_cam.generate(x)
         elif cam_generator == 'gradcampp':
             with GradCAMpp(self.model, layer, score_fn) as grad_cam:
-                return grad_cam.generate(x, inter_mode)
+                heatmap = grad_cam.generate(x)
         else:
             raise AssertionError(f'Invalid CAM mode: {cam_generator}')
+
+        heatmap = normalize_heatmap(heatmap)
+
+        if inter_mode is not None:
+            heatmap = upsample_heatmap(heatmap, h, w, inter_mode)
+
+        if cutoff_ratio is not None:
+            heatmap = heatmap_to_selection_mask(heatmap, cutoff_ratio).int()
+
+        return heatmap
 
     def get_tqdm_dict(self):
         d = dict(super(AircraftClassificationPipeline, self).get_tqdm_dict())

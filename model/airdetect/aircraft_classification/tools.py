@@ -38,7 +38,8 @@ def visualize_heatmap(dataset_config: Dict[str, str],
                       snapshot_path: str,
                       device: int,
                       samples: int,
-                      inter_mode: str = 'bilinear') -> Figure:
+                      inter_mode: str = 'nearest',
+                      cutoff_ratio: Optional[float] = None) -> Figure:
     device = torch.device(f'cuda:{device}')
 
     model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=device)
@@ -53,7 +54,7 @@ def visualize_heatmap(dataset_config: Dict[str, str],
     y_list = []
     count = 0
 
-    for x, y in loader:
+    for x, y, *_ in loader:
         x = x.to(device)
         y = y.to(device)
 
@@ -71,9 +72,9 @@ def visualize_heatmap(dataset_config: Dict[str, str],
     y_probs_hat = torch.exp(log_softmax(z, dim=1))
     y_class_hat = torch.argmax(y_probs_hat, dim=1)
 
-    batch = (x, y)
-    mask = model.introspect_cam(batch, class_selector='true', inter_mode=inter_mode)
-    mask_hat = model.introspect_cam(batch, class_selector='pred', inter_mode=inter_mode)
+    batch = (x, y, None)
+    mask = model.introspect_cam(batch, class_selector='true', inter_mode=inter_mode, cutoff_ratio=cutoff_ratio)
+    mask_hat = model.introspect_cam(batch, class_selector='pred', inter_mode=inter_mode, cutoff_ratio=cutoff_ratio)
 
     x_sample = torch.stack([model.sample_transform(x[i]) for i in range(0, samples)])
 
@@ -110,7 +111,7 @@ def build_heatmaps(dataset_config: Dict[str, str],
             x = x.to(device)
             y = y.to(device)
 
-            batch = (x, y)
+            batch = (x, y, indices)
             mask = model.introspect_cam(batch, class_selector='true')
 
             assert indices.shape[0] == mask.shape[0]
@@ -157,7 +158,7 @@ def eval_blend(dataset_config: Dict[str, str],
             with tqdm(total=len(loader), disable=not show_progress) as progress_bar:
                 progress_bar.set_description(f'Evaluating model {i + 1}')
 
-                for x, y in loader:
+                for x, y, *_ in loader:
                     x = x.to(device)
                     y = y.to(device)
 

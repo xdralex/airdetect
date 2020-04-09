@@ -42,6 +42,7 @@ def cli_trial(experiment: str, device: int, repo: str, network: str, rnd_seed: i
 
         classes_path=config['datasets']['classes'],
         dataset_config=config['datasets']['train'],
+        heatmaps_path=config['boost']['heatmaps']['train'],
 
         repo=repo,
         network=network,
@@ -94,6 +95,7 @@ def cli_search(experiment: str, device: int, repo: str, network: str, rnd_seed: 
 
             classes_path=config['datasets']['classes'],
             dataset_config=config['datasets']['train'],
+            heatmaps_path=config['boost']['heatmaps']['train'],
 
             repo=repo,
             network=network,
