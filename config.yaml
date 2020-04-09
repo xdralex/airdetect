@@ -90,7 +90,7 @@ logging:
       handlers: [wheel5_handler]
 
     wheel5.dataset:
-      level: DEBUG
+      level: INFO
 
     wheel5.metrics:
       level: INFO
