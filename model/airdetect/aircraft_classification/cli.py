@@ -12,7 +12,7 @@ from wheel5.tracking import Tracker, CheckpointPattern
 from .pipeline import AircraftClassificationConfig
 from .tools import fit_trial, eval_blend, build_heatmaps
 from .search import make_space_dict
-from ..util import launch_tensorboard, parse_kv, dump
+from ..util import parse_kv, dump
 
 
 @click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
@@ -37,10 +37,7 @@ def cli_trial(experiment: str, device: int, repo: str, network: str,
     tracker_root = config['tracking']['tracker_root']
 
     snapshot_dir = os.path.join(snapshot_root, experiment)
-    tensorboard_dir = os.path.join(tensorboard_root, experiment)
-
     tracker = Tracker(tracker_root, experiment)
-    launch_tensorboard(tensorboard_dir)
 
     pipeline_config = AircraftClassificationConfig(
         random_state_seed=rnd_seed,
@@ -71,8 +68,6 @@ def cli_trial(experiment: str, device: int, repo: str, network: str,
     for k, v in results.items():
         print(f'{k} = {v:.5f}')
 
-    input("\nTrial completed, press Enter to exit (this will terminate TensorBoard)\n")
-
 
 @click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
 @click.option('-d', '--device', 'device', default='0', help='device number (0, 1, ...)', type=int)
@@ -97,10 +92,7 @@ def cli_search(experiment: str, device: int, repo: str, network: str,
     tracker_root = config['tracking']['tracker_root']
 
     snapshot_dir = os.path.join(snapshot_root, experiment)
-    tensorboard_dir = os.path.join(tensorboard_root, experiment)
-
     tracker = Tracker(tracker_root, experiment)
-    launch_tensorboard(tensorboard_dir)
 
     def fit_trial_wrapper(kv: Dict[str, float]):
         pipeline_config = AircraftClassificationConfig(
@@ -132,8 +124,6 @@ def cli_search(experiment: str, device: int, repo: str, network: str,
 
     space_dict = make_space_dict()
     fmin(fit_trial_wrapper, space=space_dict[space], algo=hyperopt.rand.suggest, max_evals=trials, verbose=False, show_progressbar=False)
-
-    input("\nSearch completed, press Enter to exit (this will terminate TensorBoard)\n")
 
 
 @click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)

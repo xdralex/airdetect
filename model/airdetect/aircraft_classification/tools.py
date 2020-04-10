@@ -215,6 +215,7 @@ def fit_trial(tracker: Tracker,
     tracking_callback = StatisticsTracking(trial_tracker)
 
     trainer = Trainer(logger=logger,
+                      reload_dataloaders_every_epoch=True,
                       checkpoint_callback=checkpoint_callback,
                       early_stop_callback=early_stop_callback,
                       callbacks=[tensorboard_callback, tracking_callback],

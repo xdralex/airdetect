@@ -61,7 +61,7 @@ class AircraftClassificationConfig:
     val_split: float = 0.2
     train_sample: float = 0.25
 
-    train_batch: int = 32   # TODO: grad_batch
+    train_batch: int = 32  # TODO: grad_batch
     train_workers: int = 4  # TODO: grad_workers
     eval_batch: int = 256
     eval_workers: int = 4
@@ -170,7 +170,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         #
         # DataLoaders
         #
-        self.train_loader = None
+        self.train_root_dataset = None
         self.train_orig_loader = None
         self.val_loader = None
 
@@ -187,17 +187,45 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         self.random_state.shuffle(fit_indices)
 
         val_divider = int(np.round(self.config.val_split * len(fit_indices)))
-        train_root_dataset = Subset(fit_dataset, fit_indices[val_divider:])
+        self.train_root_dataset = Subset(fit_dataset, fit_indices[val_divider:])
         val_dataset = Subset(fit_dataset, fit_indices[:val_divider])
 
-        self.journal.info(f'Datasets: train_root[{len(train_root_dataset)}], val[{len(val_dataset)}]')
+        self.journal.info(f'Datasets: train_root[{len(self.train_root_dataset)}], val[{len(val_dataset)}]')
 
         #
-        # Train datasets
+        # Val loaders
         #
-        train_dataset = ImageOneHotDataset(train_root_dataset, self.num_classes, name='train-one_hot')
+        train_root_indices = list(range(0, len(self.train_root_dataset)))
+        train_sample_size = int(len(train_root_indices) * self.config.train_sample)
+        train_sample_indices = self.random_state.choice(train_root_indices, size=train_sample_size, replace=False)
+        train_orig_dataset = Subset(self.train_root_dataset, train_sample_indices)
 
-        if check_flag(self.config.kv, 'x_cut'):
+        self.train_orig_loader = self.prepare_eval_loader(train_orig_dataset, name='train_orig')
+        self.val_loader = self.prepare_eval_loader(val_dataset, name='val')
+
+        #
+        # Model adjustment
+        #
+        train_targets = targets(self.train_root_dataset)
+        target_probs = class_distribution(train_targets, self.num_classes)
+        init_softmax_logits(self.model.fc.bias, torch.from_numpy(target_probs))
+
+    def train_dataloader(self) -> DataLoader:
+        train_dataset = ImageOneHotDataset(self.train_root_dataset, self.num_classes, name='train-one_hot')
+
+        cutmix_on = check_flag(self.config.kv, 'x_cut')
+        mixup_on = check_flag(self.config.kv, 'x_mxp')
+
+        if cutmix_on and mixup_on:
+            selector = 'mixup' if self.trainer.current_epoch % 2 == 0 else 'cutmix'
+        elif cutmix_on:
+            selector = 'cutmix'
+        elif mixup_on:
+            selector = 'mixup'
+        else:
+            selector = 'none'
+
+        if selector == 'cutmix':
             cutmix_alpha = self.config.kv['x_cut_a']
             q_min = self.config.kv.get('x_cut_q0', 0.0)
             q_max = self.config.kv.get('x_cut_q1', 1.0)
@@ -208,41 +236,27 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
             train_dataset = ImageHeatmapDataset(train_dataset, heatmaps, inter_mode=inter_mode, name='train-heatmap')
             train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True, name='train-aug1')
             train_dataset = ImageAttentiveCutMixDataset(train_dataset, alpha=cutmix_alpha, q_min=q_min, q_max=q_max, name='train-cutmix')
+        elif selector == 'mixup':
+            mixup_alpha = self.config.kv['x_mxp_a']
+
+            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=False, name='train-aug1')
+            train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, name='train-mixup')
         else:
             train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=False, name='train-aug1')
-
-        if check_flag(self.config.kv, 'x_mxp'):
-            mixup_alpha = self.config.kv['x_mxp_a']
-            train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, name='train-mixup')
 
         train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_final, name='train-aug2')
         train_dataset = TransformDataset(train_dataset, self.model_transform, name='train-model')
 
-        train_root_indices = list(range(0, len(train_root_dataset)))
-        train_sample_size = int(len(train_root_indices) * self.config.train_sample)
-        train_sample_indices = self.random_state.choice(train_root_indices, size=train_sample_size, replace=False)
+        train_loader = DataLoader(train_dataset,
+                                  batch_size=self.config.train_batch,
+                                  num_workers=self.config.train_workers,
+                                  pin_memory=True,
+                                  shuffle=True)
 
-        train_orig_dataset = Subset(train_root_dataset, train_sample_indices)
+        return train_loader
 
-        self.journal.info(f'Datasets: train[{len(train_dataset)}], train-orig[{len(train_orig_dataset)}]')
-
-        #
-        # Loaders
-        #
-        self.train_loader = DataLoader(train_dataset,
-                                       batch_size=self.config.train_batch,
-                                       num_workers=self.config.train_workers,
-                                       pin_memory=True,
-                                       shuffle=True)
-        self.train_orig_loader = self.prepare_eval_loader(train_orig_dataset, name='train_orig')
-        self.val_loader = self.prepare_eval_loader(val_dataset, name='val')
-
-        #
-        # Model adjustment
-        #
-        train_targets = targets(train_root_dataset)
-        target_probs = class_distribution(train_targets, self.num_classes)
-        init_softmax_logits(self.model.fc.bias, torch.from_numpy(target_probs))
+    def val_dataloader(self) -> List[DataLoader]:
+        return [self.val_loader, self.train_orig_loader]
 
     def adjust_model_params(self):
         param_groups = {
@@ -439,12 +453,6 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
             'val_loss': val_loss,
             'progress_bar': progress_bar,
         }
-
-    def train_dataloader(self) -> DataLoader:
-        return self.train_loader
-
-    def val_dataloader(self) -> List[DataLoader]:
-        return [self.val_loader, self.train_orig_loader]
 
     def add_epoch_samples(self, name: str, batch_idx: int, x: torch.Tensor, y: torch.Tensor):
         if batch_idx == 0 or self.config.logging_sampling_full:
