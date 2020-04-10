@@ -67,4 +67,4 @@ logging:
       level: INFO
 
     werkzeug:
-      level: WARNING
+      level: ERROR
