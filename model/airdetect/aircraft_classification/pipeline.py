@@ -133,7 +133,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         self.train_transform_mix = albu.Compose([
             albu.ShiftScaleRotate(shift_limit=0.1,
-                                  scale_limit=(-0.25, 0.15),
+                                  scale_limit=(-0.15, 0.15),
                                   rotate_limit=20,
                                   border_mode=cv2.BORDER_CONSTANT,
                                   value=mean_color,
