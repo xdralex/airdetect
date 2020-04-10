@@ -206,7 +206,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
             train_dataset = ImageSelectionMaskDataset(train_dataset, cutoff_ratio, name='train-mask')
             train_dataset = ImageMaskedCutMixDataset(train_dataset, name='train-cutmix')
         else:
-            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True, name='train-mix')
+            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=False, name='train-mix')
 
         if check_flag(self.config.kv, 'x_mxp'):
             mixup_alpha = self.config.kv['x_mxp_a']
