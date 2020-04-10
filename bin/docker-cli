@@ -19,7 +19,7 @@ else
   PORT_BINDING=""
 fi
 
-now=$(date +"%Y-%d-%m_%I:%M:%S")
+now=$(date +"%Y-%m-%d_%H:%M:%S")
 
 pushd "$DIR" > /dev/null || exit
 

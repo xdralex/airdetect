@@ -26,7 +26,7 @@ from torchvision import transforms
 import wheel5.transforms.torchvision as torchviz_ext
 from airdetect.aircraft_classification.util import check_flag
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageMixupDataset, targets, LMDBImageDataset, \
-    NdArrayStorage, ImageHeatmapDataset, ImageSelectionMaskDataset, ImageMaskedCutMixDataset
+    NdArrayStorage, ImageHeatmapDataset, ImageAttentiveCutMixDataset
 from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.metering import ReservoirSamplingMeter, ArrayAccumMeter
@@ -198,21 +198,24 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         train_dataset = ImageOneHotDataset(train_root_dataset, self.num_classes, name='train-one_hot')
 
         if check_flag(self.config.kv, 'x_cut'):
-            cutoff_ratio = self.config.kv['x_cut_a']
+            cutmix_alpha = self.config.kv['x_cut_a']
+            q_min = self.config.kv.get('x_cut_q0', 0.0)
+            q_max = self.config.kv.get('x_cut_q1', 1.0)
+
+            inter_mode = 'bilinear' if check_flag(self.config.kv, 'x_cut_i') else 'nearest'
 
             heatmaps = NdArrayStorage.load(self.config.heatmaps_path)
-            train_dataset = ImageHeatmapDataset(train_dataset, heatmaps, inter_mode='bilinear', name='train-heatmap')
-            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True, name='train-mix')
-            train_dataset = ImageSelectionMaskDataset(train_dataset, cutoff_ratio, name='train-mask')
-            train_dataset = ImageMaskedCutMixDataset(train_dataset, name='train-cutmix')
+            train_dataset = ImageHeatmapDataset(train_dataset, heatmaps, inter_mode=inter_mode, name='train-heatmap')
+            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True, name='train-aug1')
+            train_dataset = ImageAttentiveCutMixDataset(train_dataset, alpha=cutmix_alpha, q_min=q_min, q_max=q_max, name='train-cutmix')
         else:
-            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=False, name='train-mix')
+            train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=False, name='train-aug1')
 
         if check_flag(self.config.kv, 'x_mxp'):
             mixup_alpha = self.config.kv['x_mxp_a']
             train_dataset = ImageMixupDataset(train_dataset, alpha=mixup_alpha, name='train-mixup')
 
-        train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_final, name='train-final')
+        train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_final, name='train-aug2')
         train_dataset = TransformDataset(train_dataset, self.model_transform, name='train-model')
 
         train_root_indices = list(range(0, len(train_root_dataset)))
