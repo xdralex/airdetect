@@ -23,7 +23,7 @@ from wheel5.tracking import Tracker, TrialTracker
 @click.option('-r', '--repo', 'repo', default='pytorch/vision:v0.4.2', help='repository (e.g. pytorch/vision:v0.4.2)', type=str)
 @click.option('-n', '--network', 'network', required=True, help='network (e.g. resnet50)', type=str)
 @click.option('-s', '--shape', 'shape', required=True, help='input shape N x a_1 x a_2 x ... x a_k (e.g. 4x3x224x224)', type=str)
-@click.option('-d', '--device', 'device', default='cuda:0', help='device number (0, 1, ...)', type=int)
+@click.option('-d', '--device', 'device', default=0, help='device number (0, 1, ...)', type=int)
 def cli_introspect_nn(repo: str, network: str, shape: str, device: int):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
