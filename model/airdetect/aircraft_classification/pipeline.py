@@ -1,4 +1,5 @@
 import logging
+import os
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
@@ -25,8 +26,10 @@ from torchvision import transforms
 
 import wheel5.transforms.torchvision as torchviz_ext
 from airdetect.aircraft_classification.util import check_flag
-from wheel5.dataset import TransformDataset, AlbumentationsDataset, ImageOneHotDataset, ImageMixupDataset, targets, LMDBImageDataset, \
-    NdArrayStorage, ImageHeatmapDataset, ImageAttentiveCutMixDataset
+from wheel5.dataset import NdArrayStorage, LMDBImageDataset, SimpleImageDataset
+from wheel5.dataset import TransformDataset, AlbumentationsDataset
+from wheel5.dataset import ImageOneHotDataset, ImageMixupDataset, ImageHeatmapDataset, ImageAttentiveCutMixDataset
+from wheel5.dataset import targets
 from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.metering import ReservoirSamplingMeter, ArrayAccumMeter
@@ -126,7 +129,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         mean_color = tuple([int(round(c * 255)) for c in normalize_mean])
 
-        self.store_transform = transforms.Compose([
+        self.initial_transform = transforms.Compose([
             torchviz_ext.Rescale(scale=0.5, interpolation=Image.LANCZOS),
             torchviz_ext.PadToSquare(fill=mean_color)
         ])
@@ -311,7 +314,44 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         return prepare_params()
 
     def load_dataset(self, dataset_config: Dict[str, str], name: str = ''):
-        return self._load_dataset(dataset_config, self.target_classes, self.store_transform, name)
+        image_dir = dataset_config['image_dir']
+
+        metadata = dataset_config.get('metadata')
+        if metadata is None:
+            entries = []
+            for filename in os.listdir(image_dir):
+                entries.append({'path': filename, 'target': -1})
+            df_metadata = pd.DataFrame(entries)
+        else:
+            annotations = dataset_config['annotations']
+
+            df_metadata = pd.read_csv(filepath_or_buffer=metadata, sep=',', header=0)
+            df_annotations = pd.read_csv(filepath_or_buffer=annotations, sep=',', header=0)
+
+            categories_dict = {}
+            for row in df_annotations.itertuples():
+                categories_dict[row.path] = row.category
+
+            classes_map = {cls: i for i, cls in enumerate(self.target_classes)}
+
+            df_metadata['target'] = df_metadata['name'].map(lambda class_name: classes_map[class_name])
+            df_metadata['category'] = df_metadata['path'].map(lambda path: categories_dict[path])
+
+            df_metadata = df_metadata[df_metadata['category'] == 'normal']
+            df_metadata = df_metadata.drop(columns=['name', 'category'])
+
+        lmdb_dir = dataset_config.get('lmdb_dir')
+        if lmdb_dir is None:
+            return SimpleImageDataset(df_metadata,
+                                      image_dir=image_dir,
+                                      transform=self.initial_transform,
+                                      name=name)
+        else:
+            return LMDBImageDataset.cached(df_metadata,
+                                           image_dir=image_dir,
+                                           lmdb_path=lmdb_dir,
+                                           transform=self.initial_transform,
+                                           name=name)
 
     def prepare_grad_loader(self, dataset: Dataset, name: str = ''):
         dataset = AlbumentationsDataset(dataset, self.eval_transform, name=f'{name}-eval')
@@ -569,36 +609,6 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         d = dict(super(AircraftClassificationPipeline, self).get_tqdm_dict())
         del d['v_num']
         return d
-
-    @staticmethod
-    def _load_dataset(config: Dict[str, str], target_classes: List[str], store_transform: Optional[Transform] = None, name: str = '') -> LMDBImageDataset:
-        metadata = config['metadata']
-        annotations = config['annotations']
-        image_dir = config['image_dir']
-        lmdb_dir = config['lmdb_dir']
-
-        df_metadata = pd.read_csv(filepath_or_buffer=metadata, sep=',', header=0)
-        df_annotations = pd.read_csv(filepath_or_buffer=annotations, sep=',', header=0)
-
-        categories_dict = {}
-        for row in df_annotations.itertuples():
-            categories_dict[row.path] = row.category
-
-        classes_map = {cls: i for i, cls in enumerate(target_classes)}
-
-        df_metadata['target'] = df_metadata['name'].map(lambda name: classes_map[name])
-        df_metadata['category'] = df_metadata['path'].map(lambda path: categories_dict[path])
-
-        df_metadata = df_metadata[df_metadata['category'] == 'normal']
-        df_metadata = df_metadata.drop(columns=['name', 'category'])
-
-        dataset = LMDBImageDataset.cached(df_metadata,
-                                          image_dir=image_dir,
-                                          lmdb_path=lmdb_dir,
-                                          transform=store_transform,
-                                          name=name)
-
-        return dataset
 
     @staticmethod
     def _load_classes(path: str) -> List[str]:

@@ -1,5 +1,3 @@
-# noinspection PyProtectedMember
-
 import os
 from dataclasses import asdict
 from typing import Dict, Optional, Union
@@ -19,6 +17,7 @@ from tqdm import tqdm
 from wheel5.dataset import NdArrayStorage
 from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
 from wheel5.viz import draw_heatmap, HeatmapEntry, HeatmapModeColormap, HeatmapModeBloom
+from wheel5.viz.predictions import draw_predictions
 from .pipeline import AircraftClassificationConfig, AircraftClassificationPipeline
 
 Transform = Callable[[Img], Img]
@@ -32,6 +31,45 @@ class TensorboardHparamsLogger(TensorBoardLogger):
     def log_hyperparams(self, params: Dict) -> None:
         config = from_dict(AircraftClassificationConfig, params)
         super(TensorboardHparamsLogger, self).log_hyperparams(config.kv)
+
+
+def visualize_predictions(dataset_config: Dict[str, str],
+                          snapshot_path: str,
+                          device: int,
+                          samples: int) -> Figure:
+    device = torch.device(f'cuda:{device}')
+
+    model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=device)
+    model.to(device)
+    model.freeze()
+    model.eval()
+
+    dataset = model.load_dataset(dataset_config)
+    loader = model.prepare_eval_loader(dataset)
+
+    x_list = []
+    z_list = []
+    count = 0
+
+    with torch.no_grad():
+        for x, y, *_ in loader:
+            x = x.to(device)
+            z = model.forward(x)
+
+            x_list.append(x)
+            z_list.append(z)
+
+            count += x.shape[0]
+            if count >= samples:
+                break
+
+    x = torch.cat(x_list)[0:samples]
+    z = torch.cat(z_list)[0:samples]
+
+    y_probs_hat = torch.exp(log_softmax(z, dim=1))
+    x_sample = torch.stack([model.sample_transform(x[i]) for i in range(0, samples)])
+
+    return draw_predictions(x_sample, y_probs_hat, model.target_classes)
 
 
 def visualize_heatmap(dataset_config: Dict[str, str],
@@ -52,14 +90,17 @@ def visualize_heatmap(dataset_config: Dict[str, str],
 
     x_list = []
     y_list = []
+    z_list = []
     count = 0
 
     for x, y, *_ in loader:
         x = x.to(device)
         y = y.to(device)
+        z = model.forward(x)
 
         x_list.append(x)
         y_list.append(y)
+        z_list.append(z)
 
         count += x.shape[0]
         if count >= samples:
@@ -67,8 +108,8 @@ def visualize_heatmap(dataset_config: Dict[str, str],
 
     x = torch.cat(x_list)[0:samples]
     y = torch.cat(y_list)[0:samples]
+    z = torch.cat(z_list)[0:samples]
 
-    z = model.forward(x)
     y_probs_hat = torch.exp(log_softmax(z, dim=1))
     y_class_hat = torch.argmax(y_probs_hat, dim=1)
 

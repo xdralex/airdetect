@@ -6,22 +6,25 @@ tracking:
 
 datasets:
   train:
+    image_dir: /data/ssd/datasets/airdetect/train
     metadata: /data/ssd/datasets/airdetect/train.csv
     annotations: /data/ssd/datasets/airdetect/ext_train.csv
-    image_dir: /data/ssd/datasets/airdetect/train
     lmdb_dir: /data/nvme/run/airdetect/lmdb/train
 
   public_test:
+    lmdb_dir: /data/nvme/run/airdetect/lmdb/public_test
     metadata: /data/ssd/datasets/airdetect/public_test.csv
     annotations: /data/ssd/datasets/airdetect/ext_public_test.csv
     image_dir: /data/ssd/datasets/airdetect/public_test
-    lmdb_dir: /data/nvme/run/airdetect/lmdb/public_test
 
   private_test:
+    image_dir: /data/ssd/datasets/airdetect/private_test
     metadata: /data/ssd/datasets/airdetect/private_test.csv
     annotations: /data/ssd/datasets/airdetect/ext_private_test.csv
-    image_dir: /data/ssd/datasets/airdetect/private_test
     lmdb_dir: /data/nvme/run/airdetect/lmdb/private_test
+
+  reallife:
+    image_dir: /data/ssd/datasets/airdetect/reallife
 
   classes: /data/ssd/datasets/airdetect/classes
 
