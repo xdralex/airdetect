@@ -12,10 +12,10 @@ datasets:
     lmdb_dir: /data/nvme/run/airdetect/lmdb/train
 
   public_test:
+    image_dir: /data/ssd/datasets/airdetect/public_test
     lmdb_dir: /data/nvme/run/airdetect/lmdb/public_test
     metadata: /data/ssd/datasets/airdetect/public_test.csv
     annotations: /data/ssd/datasets/airdetect/ext_public_test.csv
-    image_dir: /data/ssd/datasets/airdetect/public_test
 
   private_test:
     image_dir: /data/ssd/datasets/airdetect/private_test
@@ -25,6 +25,7 @@ datasets:
 
   reallife:
     image_dir: /data/ssd/datasets/airdetect/reallife
+    lmdb_dir: /data/nvme/run/airdetect/lmdb/reallife
 
   classes: /data/ssd/datasets/airdetect/classes
 
