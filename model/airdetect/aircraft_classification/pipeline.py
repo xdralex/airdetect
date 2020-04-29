@@ -3,7 +3,7 @@ import os
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
-from typing import List, Callable
+from typing import List
 
 import albumentations as albu
 import cv2
@@ -11,8 +11,6 @@ import numpy as np
 import pandas as pd
 import pytorch_lightning as pl
 import torch
-from PIL import Image
-from PIL.Image import Image as Img
 from dacite import from_dict
 from matplotlib.figure import Figure
 from numpy.random.mtrand import RandomState
@@ -24,11 +22,12 @@ from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 from torch.utils.data import Subset, DataLoader, Dataset
 from torchvision import transforms
 
+import wheel5.transforms.albumentations as albu_ext
 import wheel5.transforms.torchvision as torchviz_ext
 from airdetect.aircraft_classification.util import check_flag
-from wheel5.dataset import NdArrayStorage, LMDBImageDataset, SimpleImageDataset
-from wheel5.dataset import TransformDataset, AlbumentationsDataset
 from wheel5.dataset import ImageOneHotDataset, ImageMixupDataset, ImageHeatmapDataset, ImageAttentiveCutMixDataset
+from wheel5.dataset import NdArrayStorage, LMDBImageDataset, SimpleImageDataset
+from wheel5.dataset import TransformDataset, AlbumentationsDataset, AlbumentationsTransform
 from wheel5.dataset import targets
 from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
@@ -41,8 +40,6 @@ from wheel5.tricks.gradcam import GradCAM, GradCAMpp, logit_to_score
 from wheel5.tricks.heatmap import normalize_heatmap, upsample_heatmap, heatmap_to_selection_mask
 from wheel5.tricks.moments import moex
 from wheel5.viz import draw_confusion_matrix
-
-Transform = Callable[[Img], Img]
 
 
 @dataclass
@@ -129,10 +126,10 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
 
         mean_color = tuple([int(round(c * 255)) for c in normalize_mean])
 
-        self.initial_transform = transforms.Compose([
-            torchviz_ext.Rescale(scale=0.5, interpolation=Image.LANCZOS),
-            torchviz_ext.PadToSquare(fill=mean_color)
-        ])
+        self.initial_transform = AlbumentationsTransform(albu.Compose([
+            albu_ext.Rescale(scale=0.5, interpolation=cv2.INTER_AREA),
+            albu_ext.PadToSquare(fill=mean_color)
+        ]))
 
         self.train_transform_mix = albu.Compose([
             albu.ShiftScaleRotate(shift_limit=0.1,
