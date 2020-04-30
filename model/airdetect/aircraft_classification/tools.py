@@ -18,7 +18,7 @@ from wheel5.dataset import NdArrayStorage
 from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
 from wheel5.viz import draw_heatmap, HeatmapEntry, HeatmapModeColormap, HeatmapModeBloom
 from wheel5.viz.predictions import draw_predictions
-from .pipeline import AircraftClassificationConfig, AircraftClassificationPipeline
+from .pipeline import AircraftClassifierConfig, AircraftClassifier
 
 Transform = Callable[[Img], Img]
 
@@ -29,7 +29,7 @@ class TensorboardHparamsLogger(TensorBoardLogger):
 
     @rank_zero_only
     def log_hyperparams(self, params: Dict) -> None:
-        config = from_dict(AircraftClassificationConfig, params)
+        config = from_dict(AircraftClassifierConfig, params)
         super(TensorboardHparamsLogger, self).log_hyperparams(config.kv)
 
 
@@ -39,7 +39,7 @@ def visualize_predictions(dataset_config: Dict[str, str],
                           samples: int) -> Figure:
     device = torch.device(f'cuda:{device}')
 
-    model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=device)
+    model = AircraftClassifier.load_from_checkpoint(snapshot_path, map_location=device)
     model.to(device)
     model.freeze()
     model.eval()
@@ -81,7 +81,7 @@ def visualize_heatmap(dataset_config: Dict[str, str],
                       cutoff_ratio: Optional[float] = None) -> Figure:
     device = torch.device(f'cuda:{device}')
 
-    model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=device)
+    model = AircraftClassifier.load_from_checkpoint(snapshot_path, map_location=device)
     model.to(device)
     model.unfreeze()
     model.eval()
@@ -144,7 +144,7 @@ def build_heatmaps(dataset_config: Dict[str, str],
                    show_progress: bool = True):
     device = torch.device(f'cuda:{device}')
 
-    model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=device)
+    model = AircraftClassifier.load_from_checkpoint(snapshot_path, map_location=device)
     model.to(device)
     model.unfreeze()
     model.eval()
@@ -193,7 +193,7 @@ def eval_blend(dataset_config: Dict[str, str],
         y_only = None
         y_probs_hat_list = []
         for i, snapshot_path in enumerate(snapshot_paths):
-            model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_path, map_location=device)
+            model = AircraftClassifier.load_from_checkpoint(snapshot_path, map_location=device)
             model.to(device)
             model.freeze()
             model.eval()
@@ -229,7 +229,7 @@ def eval_blend(dataset_config: Dict[str, str],
         y_probs_hat_blend = torch.mean(y_probs_hat_stack, dim=0)
         y_class_hat = torch.argmax(y_probs_hat_blend, dim=1)
 
-        model = AircraftClassificationPipeline.load_from_checkpoint(snapshot_paths[0], map_location=device)
+        model = AircraftClassifier.load_from_checkpoint(snapshot_paths[0], map_location=device)
         model.to(device)
         model.freeze()
         model.eval()
@@ -247,7 +247,7 @@ def fit_trial(tracker: Tracker,
               tensorboard_root: str,
               experiment: str,
               device: int,
-              config: AircraftClassificationConfig,
+              config: AircraftClassifierConfig,
               max_epochs: int) -> Dict[str, float]:
 
     torch.set_printoptions(linewidth=250, edgeitems=10)
@@ -255,7 +255,7 @@ def fit_trial(tracker: Tracker,
     trial_tracker = tracker.new_trial(config.kv)
     snapshot_trial = os.path.join(snapshot_dir, trial_tracker.trial)
 
-    pipeline = AircraftClassificationPipeline(hparams=asdict(config))
+    pipeline = AircraftClassifier(hparams=asdict(config))
     logger = TensorboardHparamsLogger(save_dir=tensorboard_root, name=experiment, version=trial_tracker.trial)
 
     checkpoint_callback = ModelCheckpoint(filepath=CheckpointPattern.pattern(snapshot_trial), monitor='val_acc', mode='max', save_top_k=1)

@@ -43,7 +43,7 @@ from wheel5.viz import draw_confusion_matrix
 
 
 @dataclass
-class AircraftClassificationConfig:
+class AircraftClassifierConfig:
     random_state_seed: int
 
     classes_path: str
@@ -79,15 +79,15 @@ class Sample:
     y: torch.Tensor
 
 
-class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
+class AircraftClassifier(pl.LightningModule, ProbesInterface):
 
     def __init__(self, hparams: Dict):
-        super(AircraftClassificationPipeline, self).__init__()
+        super(AircraftClassifier, self).__init__()
 
         self.journal = logging.getLogger(__name__)
 
         self.hparams = hparams
-        self.config = from_dict(AircraftClassificationConfig, hparams)
+        self.config = from_dict(AircraftClassifierConfig, hparams)
 
         self.random_state = RandomState(self.config.random_state_seed)
 
@@ -603,7 +603,7 @@ class AircraftClassificationPipeline(pl.LightningModule, ProbesInterface):
         return heatmap
 
     def get_tqdm_dict(self):
-        d = dict(super(AircraftClassificationPipeline, self).get_tqdm_dict())
+        d = dict(super(AircraftClassifier, self).get_tqdm_dict())
         del d['v_num']
         return d
 

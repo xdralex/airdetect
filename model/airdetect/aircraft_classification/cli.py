@@ -9,7 +9,7 @@ from typing import Dict
 from wheel5 import logutils
 from wheel5.tracking import Tracker, CheckpointPattern
 
-from .pipeline import AircraftClassificationConfig
+from .pipeline import AircraftClassifierConfig
 from .tools import fit_trial, eval_blend, build_heatmaps
 from .search import make_space_dict
 from ..util import parse_kv, dump
@@ -39,7 +39,7 @@ def cli_trial(experiment: str, device: int, repo: str, network: str,
     snapshot_dir = os.path.join(snapshot_root, experiment)
     tracker = Tracker(tracker_root, experiment)
 
-    pipeline_config = AircraftClassificationConfig(
+    pipeline_config = AircraftClassifierConfig(
         random_state_seed=rnd_seed,
 
         classes_path=config['datasets']['classes'],
@@ -95,7 +95,7 @@ def cli_search(experiment: str, device: int, repo: str, network: str,
     tracker = Tracker(tracker_root, experiment)
 
     def fit_trial_wrapper(kv: Dict[str, float]):
-        pipeline_config = AircraftClassificationConfig(
+        pipeline_config = AircraftClassifierConfig(
             random_state_seed=rnd_seed,
 
             classes_path=config['datasets']['classes'],
