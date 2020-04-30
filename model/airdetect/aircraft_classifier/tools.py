@@ -17,8 +17,8 @@ from tqdm import tqdm
 from wheel5.dataset import NdArrayStorage
 from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
 from wheel5.viz import draw_heatmap, HeatmapEntry, HeatmapModeColormap, HeatmapModeBloom
-from wheel5.viz.predictions import draw_predictions
-from .pipeline import AircraftClassifierConfig, AircraftClassifier
+from wheel5.viz.predictions import draw_classes
+from .classifier import AircraftClassifierConfig, AircraftClassifier
 
 Transform = Callable[[Img], Img]
 
@@ -69,7 +69,7 @@ def visualize_predictions(dataset_config: Dict[str, str],
     y_probs_hat = torch.exp(log_softmax(z, dim=1))
     x_sample = torch.stack([model.sample_transform(x[i]) for i in range(0, samples)])
 
-    return draw_predictions(x_sample, y_probs_hat, model.target_classes)
+    return draw_classes(x_sample, y_probs_hat, model.target_classes)
 
 
 def visualize_heatmap(dataset_config: Dict[str, str],

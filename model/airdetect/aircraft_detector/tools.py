@@ -6,7 +6,9 @@ import torch
 from PIL.Image import Image as Img
 from matplotlib.figure import Figure
 
-from .pipeline import AircraftDetector, AircraftDetectorConfig
+from wheel5.tasks.detection import BoundingBoxes
+from wheel5.viz.predictions import draw_bboxes
+from .detector import AircraftDetector, AircraftDetectorConfig
 
 Transform = Callable[[Img], Img]
 
@@ -36,6 +38,9 @@ def visualize_predictions(dataset_config: Dict[str, str],
             x = [t.to(device) for t in x]
             z = model.forward(x)
 
+            print(x[0].shape)
+            # print(z)
+
             x_list += x
             z_list += z
 
@@ -46,4 +51,5 @@ def visualize_predictions(dataset_config: Dict[str, str],
     x = x_list[0:samples]
     z = z_list[0:samples]
 
-    print(z)
+    meta = [BoundingBoxes(bboxes=t['boxes'], labels=t['labels'], scores=t['scores']) for t in z]
+    draw_bboxes(x, meta, model.categories)

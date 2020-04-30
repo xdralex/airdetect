@@ -1,4 +1,4 @@
-from .pipeline import *
+from .classifier import *
 from .tools import *
 from .search import *
 from .cli import *
