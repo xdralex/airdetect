@@ -3,8 +3,6 @@ from dataclasses import dataclass
 from typing import Dict
 from typing import List
 
-import albumentations as albu
-import cv2
 import pandas as pd
 import pytorch_lightning as pl
 import torchvision
@@ -12,7 +10,7 @@ from dacite import from_dict
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
-from wheel5.dataset import SimpleImageDetectionDataset, AlbumentationsTransform
+from wheel5.dataset import SimpleImageDetectionDataset
 from wheel5.dataset import TransformDataset
 from .data import COCO_INSTANCE_CATEGORY_NAMES
 
@@ -49,8 +47,14 @@ class AircraftDetector(pl.LightningModule):
 
         self.model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True, progress=False)
 
+        # normalize_mean = [0.485, 0.456, 0.406]
+        # normalize_std = [0.229, 0.224, 0.225]
+        #
+        # mean_color = tuple([int(round(c * 255)) for c in normalize_mean])
+        #
         # self.initial_transform = AlbumentationsTransform(albu.Compose([
         #     albu.LongestMaxSize(max_size=1024, interpolation=cv2.INTER_AREA),
+        #     albu_ext.PadToSquare(fill=mean_color)
         # ]))
 
         self.model_transform = transforms.Compose([
