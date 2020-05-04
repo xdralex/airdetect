@@ -325,6 +325,7 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
             classes_map = {cls: i for i, cls in enumerate(self.target_classes)}
             df_metadata['target'] = df_metadata['name'].map(lambda class_name: classes_map.get(class_name))
             df_metadata = df_metadata[df_metadata['target'].notnull()]
+            df_metadata['target'] = df_metadata['target'].astype('int64')
 
             annotations = dataset_config.get('annotations')
             if annotations is not None:
@@ -349,6 +350,7 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
             return LMDBImageDataset.cached(df_metadata,
                                            image_dir=image_dir,
                                            lmdb_path=lmdb_dir,
+                                           lmdb_map_size=(1024**4),
                                            transform=self.initial_transform,
                                            name=name)
 

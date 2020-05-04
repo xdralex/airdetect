@@ -8,21 +8,21 @@ datasets:
   train:
     image_dir: /data/ssd/datasets/airdetect250k/train
     metadata: /data/ssd/datasets/airdetect250k/train.csv
-    lmdb_dir: /data/nvme/run/airdetect250k/lmdb/train
+    lmdb_dir: /data/nvme/run/airdetect250k_C20/lmdb/train
 
   public_test:
     image_dir: /data/ssd/datasets/airdetect250k/public_test
-    lmdb_dir: /data/nvme/run/airdetect250k/lmdb/public_test
     metadata: /data/ssd/datasets/airdetect250k/public_test.csv
+    lmdb_dir: /data/nvme/run/airdetect250k_C20/lmdb/public_test
 
   private_test:
     image_dir: /data/ssd/datasets/airdetect250k/private_test
     metadata: /data/ssd/datasets/airdetect250k/private_test.csv
-    lmdb_dir: /data/nvme/run/airdetect250k/lmdb/private_test
+    lmdb_dir: /data/nvme/run/airdetect250k_C20/lmdb/private_test
 
   reallife:
     image_dir: /data/ssd/datasets/airdetect250k/reallife
-    lmdb_dir: /data/nvme/run/airdetect250k/lmdb/reallife
+    lmdb_dir: /data/nvme/run/airdetect250k_C20/lmdb/reallife
 
   debug:
     image_dir: /data/ssd/datasets/airdetect250k/debug
