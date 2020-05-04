@@ -4,15 +4,16 @@ import re
 import click
 import pandas as pd
 import torch
+import torchvision
 import yaml
 from torch import nn
 from torchsummary import summary
 from typing import Optional
 
-from airdetect.aircraft_classification import cli_eval as cls_eval
-from airdetect.aircraft_classification import cli_search as cls_search
-from airdetect.aircraft_classification import cli_trial as cls_trial
-from airdetect.aircraft_classification import cli_build_heatmaps as cls_build_heatmaps
+from airdetect.aircraft_classifier import cli_eval as cls_eval
+from airdetect.aircraft_classifier import cli_search as cls_search
+from airdetect.aircraft_classifier import cli_trial as cls_trial
+from airdetect.aircraft_classifier import cli_build_heatmaps as cls_build_heatmaps
 from airdetect.util import dump, launch_tensorboard
 from wheel5 import logutils
 from wheel5.introspection import introspect, make_dot
@@ -38,9 +39,17 @@ def cli_introspect_nn(repo: str, network: str, shape: str, device: int):
     if len(dims) <= 1:
         raise click.BadOptionUsage('shape', f'Invalid input shape: "{shape}": at least two dimensions (batch size and tensor size) must be provided')
 
-    model = torch.hub.load(repo, network, pretrained=True, verbose=False)
-    device = torch.device(f'cuda:{device}')
-    model = model.to(device)
+    if repo != 'x':
+        model = torch.hub.load(repo, network, pretrained=True, verbose=False)
+        device = torch.device(f'cuda:{device}')
+        model = model.to(device)
+    else:
+        if network == 'torchvision:fasterrcnn_resnet50_fpn':
+            model = torchvision.models.detection.fasterrcnn_resnet50_fpn(pretrained=True, progress=False)
+        elif network == 'torchvision:maskrcnn_resnet50_fpn':
+            model = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True, progress=False)
+        else:
+            raise click.BadOptionUsage('network', f'Unsupported network {network}')
 
     def print_model_params(module_name: Optional[str], module: nn.Module, depth: int = 0):
         indent: str = ' ' * 4
@@ -59,6 +68,8 @@ def cli_introspect_nn(repo: str, network: str, shape: str, device: int):
         for name, child in module.named_children():
             child_name_qual = f'{module_name}.{name}' if module_name else f'{name}'
             print_model_params(f'{indent * depth}{child_name_qual}', child, depth)
+
+    model.eval()
 
     print(f'Model:\n{model}\n\n')
 

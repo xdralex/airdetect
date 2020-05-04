@@ -320,22 +320,24 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
                 entries.append({'path': filename, 'target': -1})
             df_metadata = pd.DataFrame(entries)
         else:
-            annotations = dataset_config['annotations']
-
             df_metadata = pd.read_csv(filepath_or_buffer=metadata, sep=',', header=0)
-            df_annotations = pd.read_csv(filepath_or_buffer=annotations, sep=',', header=0)
-
-            categories_dict = {}
-            for row in df_annotations.itertuples():
-                categories_dict[row.path] = row.category
 
             classes_map = {cls: i for i, cls in enumerate(self.target_classes)}
+            df_metadata['target'] = df_metadata['name'].map(lambda class_name: classes_map.get(class_name))
+            df_metadata = df_metadata[df_metadata['target'].notnull()]
 
-            df_metadata['target'] = df_metadata['name'].map(lambda class_name: classes_map[class_name])
-            df_metadata['category'] = df_metadata['path'].map(lambda path: categories_dict[path])
+            annotations = dataset_config.get('annotations')
+            if annotations is not None:
+                df_annotations = pd.read_csv(filepath_or_buffer=annotations, sep=',', header=0)
 
-            df_metadata = df_metadata[df_metadata['category'] == 'normal']
-            df_metadata = df_metadata.drop(columns=['name', 'category'])
+                categories_dict = {}
+                for row in df_annotations.itertuples():
+                    categories_dict[row.path] = row.category
+
+                df_metadata['category'] = df_metadata['path'].map(lambda path: categories_dict[path])
+
+                df_metadata = df_metadata[df_metadata['category'] == 'normal']
+                df_metadata = df_metadata.drop(columns=['name', 'category'])
 
         lmdb_dir = dataset_config.get('lmdb_dir')
         if lmdb_dir is None:
