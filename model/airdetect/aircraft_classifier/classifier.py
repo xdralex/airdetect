@@ -1,5 +1,4 @@
 import logging
-import os
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
@@ -8,7 +7,6 @@ from typing import List
 import albumentations as albu
 import cv2
 import numpy as np
-import pandas as pd
 import pytorch_lightning as pl
 import torch
 from dacite import from_dict
@@ -25,21 +23,22 @@ from torchvision import transforms
 import wheel5.transforms.albumentations as albu_ext
 import wheel5.transforms.torchvision as torchviz_ext
 from wheel5.dataset import ImageOneHotDataset, ImageMixupDataset, ImageHeatmapDataset, ImageAttentiveCutMixDataset
-from wheel5.dataset import NdArrayStorage, LMDBImageDataset, SimpleImageDataset
 from wheel5.dataset import TransformDataset, AlbumentationsDataset, AlbumentationsTransform
 from wheel5.dataset import targets
-from wheel5.dataset.functional import class_distribution
 from wheel5.loss import SoftLabelCrossEntropyLoss
 from wheel5.metering import ReservoirSamplingMeter, ArrayAccumMeter
 from wheel5.metrics import ExactMatchAccuracy, DiceAccuracy
 from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
+from wheel5.storage import NdArraysStorage
+from wheel5.tasks.classification import class_distribution
 from wheel5.tracking import ProbesInterface
 from wheel5.tricks.gradcam import GradCAM, GradCAMpp, logit_to_score
 from wheel5.tricks.heatmap import normalize_heatmap, upsample_heatmap, heatmap_to_selection_mask
 from wheel5.tricks.moments import moex
 from wheel5.viz import draw_confusion_matrix
 from .util import check_flag
+from ..data import load_classes, ClassifierDatasetConfig, load_classifier_dataset
 
 
 @dataclass
@@ -103,7 +102,7 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
         #
         # Model
         #
-        self.target_classes = self._load_classes(self.config.classes_path)
+        self.target_classes = load_classes(self.config.classes_path)
         self.num_classes = len(self.target_classes)
 
         self.model = torch.hub.load(self.config.repo, self.config.network, pretrained=True, verbose=False)
@@ -178,7 +177,7 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
         #
         # Dataset loading
         #
-        fit_dataset = self.load_dataset(self.config.dataset_config, name='fit')
+        fit_dataset = self.load_dataset(config=ClassifierDatasetConfig.from_dict(self.config.dataset_config), name='fit')
 
         #
         # Split into train/validation
@@ -210,6 +209,12 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
         target_probs = class_distribution(train_targets, self.num_classes)
         init_softmax_logits(self.model.fc.bias, torch.from_numpy(target_probs))
 
+    def load_dataset(self, config: ClassifierDatasetConfig, name: str = ''):
+        return load_classifier_dataset(config=config,
+                                       target_classes=self.target_classes,
+                                       transform=self.initial_transform,
+                                       name=name)
+
     def train_dataloader(self) -> DataLoader:
         train_dataset = ImageOneHotDataset(self.train_root_dataset, self.num_classes, name='train-one_hot')
 
@@ -232,7 +237,7 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
 
             inter_mode = 'bilinear' if check_flag(self.config.kv, 'x_cut_i') else 'nearest'
 
-            heatmaps = NdArrayStorage.load(self.config.heatmaps_path)
+            heatmaps = NdArraysStorage.load(self.config.heatmaps_path)
             train_dataset = ImageHeatmapDataset(train_dataset, heatmaps, inter_mode=inter_mode, name='train-heatmap')
             train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True, name='train-aug1')
             train_dataset = ImageAttentiveCutMixDataset(train_dataset, alpha=cutmix_alpha, q_min=q_min, q_max=q_max, name='train-cutmix')
@@ -309,50 +314,6 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
         freeze_params()
         init_param_groups()
         return prepare_params()
-
-    def load_dataset(self, dataset_config: Dict[str, str], name: str = ''):
-        image_dir = dataset_config['image_dir']
-
-        metadata = dataset_config.get('metadata')
-        if metadata is None:
-            entries = []
-            for filename in os.listdir(image_dir):
-                entries.append({'path': filename, 'target': -1})
-            df_metadata = pd.DataFrame(entries)
-        else:
-            df_metadata = pd.read_csv(filepath_or_buffer=metadata, sep=',', header=0)
-
-            classes_map = {cls: i for i, cls in enumerate(self.target_classes)}
-            df_metadata['target'] = df_metadata['name'].map(lambda class_name: classes_map.get(class_name))
-            df_metadata = df_metadata[df_metadata['target'].notnull()]
-            df_metadata['target'] = df_metadata['target'].astype('int64')
-
-            annotations = dataset_config.get('annotations')
-            if annotations is not None:
-                df_annotations = pd.read_csv(filepath_or_buffer=annotations, sep=',', header=0)
-
-                categories_dict = {}
-                for row in df_annotations.itertuples():
-                    categories_dict[row.path] = row.category
-
-                df_metadata['category'] = df_metadata['path'].map(lambda path: categories_dict[path])
-
-                df_metadata = df_metadata[df_metadata['category'] == 'normal']
-                df_metadata = df_metadata.drop(columns=['name', 'category'])
-
-        lmdb_dir = dataset_config.get('lmdb_dir')
-        if lmdb_dir is None:
-            return SimpleImageDataset(df_metadata,
-                                      image_dir=image_dir,
-                                      transform=self.initial_transform,
-                                      name=name)
-        else:
-            return LMDBImageDataset.cached(df_metadata,
-                                           image_dir=image_dir,
-                                           lmdb_path=lmdb_dir,
-                                           lmdb_map_size=(1024**4),
-                                           transform=self.initial_transform,
-                                           name=name)
 
     def prepare_grad_loader(self, dataset: Dataset, name: str = ''):
         dataset = AlbumentationsDataset(dataset, self.eval_transform, name=f'{name}-eval')
@@ -610,9 +571,3 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
         d = dict(super(AircraftClassifier, self).get_tqdm_dict())
         del d['v_num']
         return d
-
-    @staticmethod
-    def _load_classes(path: str) -> List[str]:
-        with open(path, 'r') as f:
-            lines = [line.strip() for line in f.readlines()]
-            return [line for line in lines if line != '']

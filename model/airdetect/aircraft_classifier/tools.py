@@ -14,11 +14,12 @@ from pytorch_lightning.loggers import rank_zero_only
 from torch.nn.functional import log_softmax
 from tqdm import tqdm
 
-from wheel5.dataset import NdArrayStorage
+from wheel5.storage import NdArraysStorage
 from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
 from wheel5.viz import draw_heatmap, HeatmapEntry, HeatmapModeColormap, HeatmapModeBloom
 from wheel5.viz.predictions import draw_classes
 from .classifier import AircraftClassifierConfig, AircraftClassifier
+from ..data import ClassifierDatasetConfig
 
 Transform = Callable[[Img], Img]
 
@@ -44,7 +45,7 @@ def visualize_predictions(dataset_config: Dict[str, str],
     model.freeze()
     model.eval()
 
-    dataset = model.load_dataset(dataset_config)
+    dataset = model.load_dataset(config=ClassifierDatasetConfig.from_dict(dataset_config))
     loader = model.prepare_eval_loader(dataset)
 
     x_list = []
@@ -86,7 +87,7 @@ def visualize_heatmap(dataset_config: Dict[str, str],
     model.unfreeze()
     model.eval()
 
-    dataset = model.load_dataset(dataset_config)
+    dataset = model.load_dataset(config=ClassifierDatasetConfig.from_dict(dataset_config))
     loader = model.prepare_grad_loader(dataset)
 
     x_list = []
@@ -149,7 +150,7 @@ def build_heatmaps(dataset_config: Dict[str, str],
     model.unfreeze()
     model.eval()
 
-    dataset = model.load_dataset(dataset_config)
+    dataset = model.load_dataset(config=ClassifierDatasetConfig.from_dict(dataset_config))
     loader = model.prepare_grad_loader(dataset)
 
     heatmaps = {}
@@ -175,7 +176,7 @@ def build_heatmaps(dataset_config: Dict[str, str],
     for i in range(0, len(heatmaps)):
         assert str(i) in heatmaps
 
-    storage = NdArrayStorage(heatmaps)
+    storage = NdArraysStorage(heatmaps)
     storage.save(heatmap_path)
 
 
@@ -199,7 +200,7 @@ def eval_blend(dataset_config: Dict[str, str],
             model.eval()
 
             if loader is None:
-                dataset = model.load_dataset(dataset_config)
+                dataset = model.load_dataset(config=ClassifierDatasetConfig.from_dict(dataset_config))
                 loader = model.prepare_eval_loader(dataset)
 
             z_list = []
