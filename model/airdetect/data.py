@@ -120,13 +120,10 @@ def load_classifier_dataset(config: ClassifierDatasetConfig,
 
 
 def load_detector_dataset(config: DetectorDatasetConfig, name: str = ''):
-    if config.metadata is None:
-        entries = []
-        for filename in os.listdir(config.image_dir):
-            entries.append({'path': filename})
-        df_metadata = pd.DataFrame(entries)
-    else:
-        raise NotImplementedError()
+    entries = []
+    for filename in os.listdir(config.image_dir):
+        entries.append({'path': filename})
+    df_metadata = pd.DataFrame(entries)
 
     return SimpleImageDetectionDataset(df_metadata,
                                        image_dir=config.image_dir,
