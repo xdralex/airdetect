@@ -34,6 +34,10 @@ boost:
   heatmaps:
     train: /data/nvme/run/airdetect/boost/heatmaps/train
 
+  bboxes:
+    train: /data/nvme/run/airdetect/boost/bboxes/train
+    reallife: /data/nvme/run/airdetect/boost/bboxes/reallife
+    debug: /data/nvme/run/airdetect/boost/bboxes/debug
 
 viz:
   nn_dir: /data/ssd/run/airdetect/viz/networks
@@ -51,7 +55,7 @@ logging:
       class: logging.StreamHandler
       formatter: console_formatter
       level: INFO
-      stream: ext://sys.stderr
+      stream: ext://sys.stdout
 
   root:
     level: INFO
