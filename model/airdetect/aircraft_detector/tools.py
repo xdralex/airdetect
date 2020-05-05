@@ -8,7 +8,7 @@ from PIL.Image import Image as Img
 from matplotlib.figure import Figure
 from tqdm import tqdm
 
-from wheel5.storage import DictStorage, LMDBDict, encode_list
+from wheel5.storage import DictStorage, LMDBDict, encode_list, decode_list
 from wheel5.tasks.detection import extract_bboxes, BoundingBox
 from wheel5.util import shape
 from wheel5.viz.predictions import draw_bboxes
@@ -38,8 +38,8 @@ def visualize_predictions(dataset_config: Dict[str, str],
 
     categories_num = [model.categories_to_num[category] for category in categories]
 
-    dataset = model.load_dataset(config=DetectorDatasetConfig.from_dict(dataset_config))
-    loader = model.prepare_eval_loader(dataset)
+    dataset = model.load_dataset(config=DetectorDatasetConfig.from_dict(dataset_config), name='main')
+    loader = model.prepare_eval_loader(dataset, name='main')
 
     x_list = []
     bboxes_list = []
@@ -56,6 +56,45 @@ def visualize_predictions(dataset_config: Dict[str, str],
             count += len(x)
             if count >= samples:
                 break
+
+    x = x_list[0:samples]
+    bboxes = bboxes_list[0:samples]
+
+    draw_bboxes(x, bboxes=bboxes, categories=model.categories, directory=directory)
+
+
+def visualize_stored_predictions(dataset_config: Dict[str, str],
+                                 bboxes_path: str,
+                                 samples: int,
+                                 directory: Optional[str] = None) -> Figure:
+
+    config = AircraftDetectorConfig(random_state_seed=42)
+    hparams = asdict(config)
+
+    model = AircraftDetector(hparams)
+    model.freeze()
+    model.eval()
+
+    dataset = model.load_dataset(config=DetectorDatasetConfig.from_dict(dataset_config), name='main')
+    loader = model.prepare_eval_loader(dataset, name='main')
+
+    x_list = []
+    bboxes_list = []
+    count = 0
+
+    with LMDBDict(bboxes_path) as bboxes_db:
+        with torch.no_grad():
+            for x, _, indices in loader:
+                for i in range(0, len(indices)):
+                    key = str(int(indices[i]))
+                    bboxes = [BoundingBox.decode(b) for b in decode_list(bboxes_db[key], size=BoundingBox.size())]
+
+                    x_list.append(x[i])
+                    bboxes_list.append(bboxes)
+
+                count += len(x)
+                if count >= samples:
+                    break
 
     x = x_list[0:samples]
     bboxes = bboxes_list[0:samples]
@@ -98,7 +137,7 @@ def build_bboxes(dataset_config: Dict[str, str],
                     bboxes = extract_bboxes(z_i_cpu, categories=airplane_categories)
 
                     key = str(int(indices[i]))
-                    bboxes_db[key] = encode_list([bbox.encode() for bbox in bboxes], BoundingBox.size())
+                    bboxes_db[key] = encode_list([bbox.encode() for bbox in bboxes], size=BoundingBox.size())
 
                     logger.info(f'#{key} - {shape(x[i])}:\n' + '\n'.join([f'    {str(bbox)}' for bbox in bboxes]))
 
