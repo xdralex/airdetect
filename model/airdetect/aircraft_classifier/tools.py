@@ -21,9 +21,10 @@ from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, Che
 from wheel5.util import shape
 from wheel5.viz import draw_heatmap, HeatmapEntry, HeatmapModeColormap, HeatmapModeBloom
 from wheel5.viz.predictions import draw_classes
+from wheel5.storage import HeatmapLMDBDict
 from .classifier import AircraftClassifierConfig, AircraftClassifier
 from ..data import ClassifierDatasetConfig
-from ..storage import HeatmapLMDBDict
+
 
 Transform = Callable[[Img], Img]
 

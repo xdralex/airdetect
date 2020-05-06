@@ -15,9 +15,9 @@ from wheel5.storage import LMDBDict
 from wheel5.tasks.detection import convert_bboxes, filter_bboxes, non_maximum_suppression, Rectangle
 from wheel5.util import shape
 from wheel5.viz.predictions import draw_bboxes
+from wheel5.storage import BoundingBoxesLMDBDict
 from .detector import AircraftDetector, AircraftDetectorConfig
 from ..data import DetectorDatasetConfig, load_detector_dataset
-from ..storage import BoundingBoxesLMDBDict
 
 Transform = Callable[[Img], Img]
 

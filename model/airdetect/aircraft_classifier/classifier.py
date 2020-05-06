@@ -37,9 +37,9 @@ from wheel5.tricks.gradcam import GradCAM, GradCAMpp, logit_to_score
 from wheel5.tricks.heatmap import normalize_heatmap, upsample_heatmap, heatmap_to_selection_mask
 from wheel5.tricks.moments import moex
 from wheel5.viz import draw_confusion_matrix
+from wheel5.storage import HeatmapLMDBDict
 from .util import check_flag
 from ..data import load_classes, ClassifierDatasetConfig, load_classifier_dataset
-from ..storage import HeatmapLMDBDict
 
 
 @dataclass
