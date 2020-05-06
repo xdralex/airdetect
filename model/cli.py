@@ -31,7 +31,9 @@ from wheel5.tracking import Tracker, TrialTracker
 def cli_introspect_nn(repo: str, network: str, shape: str, device: int):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
-        viz_nn_dir = config['viz']['nn_dir']
+        logutils.configure_logging(config['logging'])
+
+    viz_nn_dir = config['viz']['nn_dir']
 
     dims = []
     for dim_str in shape.split('x'):
@@ -98,6 +100,7 @@ def cli_introspect_nn(repo: str, network: str, shape: str, device: int):
 def cli_list_experiments():
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
 
     tracker_root = config['tracking']['tracker_root']
     df_experiments = Tracker.load_experiment_stats(tracker_root)
@@ -118,6 +121,7 @@ def cli_list_trials(experiment: str, top: int, metric_name: str, order: str, hid
 
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
 
     tracker_root = config['tracking']['tracker_root']
     df_res = Tracker.load_trial_stats(tracker_root, experiment, complete_only=not incomplete)
@@ -142,6 +146,7 @@ def cli_list_trials(experiment: str, top: int, metric_name: str, order: str, hid
 def cli_dump_trial(experiment: str, trial: str, hide: str, incomplete: bool):
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
 
     tracker_root = config['tracking']['tracker_root']
     df_res = TrialTracker.load_trial_stats(tracker_root, experiment, trial, load_hparams=False, complete_only=not incomplete)

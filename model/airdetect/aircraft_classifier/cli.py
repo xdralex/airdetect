@@ -140,6 +140,7 @@ def cli_eval(experiment: str, device: int, top: int, metric_name: str, order: st
 
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
 
     snapshot_root = config['tracking']['snapshot_root']
     tracker_root = config['tracking']['tracker_root']
@@ -186,6 +187,7 @@ def cli_build_heatmaps(experiment: str, device: int, dataset: str, top: int, met
 
     with open('config.yaml', 'r') as config_file:
         config = yaml.load(config_file, Loader=yaml.Loader)
+        logutils.configure_logging(config['logging'])
 
     snapshot_root = config['tracking']['snapshot_root']
     tracker_root = config['tracking']['tracker_root']
