@@ -7,7 +7,7 @@ import pandas as pd
 from PIL.Image import Image as Img
 from dacite import from_dict
 
-from wheel5.dataset import LMDBImageDataset, SimpleImageDataset
+from wheel5.dataset import LMDBImageDataset, SimpleImageClassificationDataset
 from wheel5.dataset import SimpleImageDetectionDataset
 
 COCO_INSTANCE_CATEGORY_NAMES = [
@@ -106,10 +106,10 @@ def load_classifier_dataset(config: ClassifierDatasetConfig,
             df_metadata = df_metadata.drop(columns=['name', 'category'])
 
     if config.lmdb_dir is None:
-        return SimpleImageDataset(df_metadata,
-                                  image_dir=config.image_dir,
-                                  transform=transform,
-                                  name=name)
+        return SimpleImageClassificationDataset(df_metadata,
+                                                image_dir=config.image_dir,
+                                                transform=transform,
+                                                name=name)
     else:
         return LMDBImageDataset.cached(df_metadata,
                                        image_dir=config.image_dir,

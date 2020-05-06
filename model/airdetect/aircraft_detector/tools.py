@@ -10,12 +10,13 @@ from matplotlib.figure import Figure
 from torch.utils.data import Subset
 from tqdm import tqdm
 
-from wheel5.storage import LMDBDict, encode_list, decode_list
-from wheel5.tasks.detection import BoundingBox, convert_bboxes, filter_bboxes, non_maximum_suppression, Rectangle
+from wheel5.storage import LMDBDict
+from wheel5.tasks.detection import convert_bboxes, filter_bboxes, non_maximum_suppression, Rectangle
 from wheel5.util import shape
 from wheel5.viz.predictions import draw_bboxes
 from .detector import AircraftDetector, AircraftDetectorConfig
 from ..data import DetectorDatasetConfig, load_detector_dataset
+from ..storage import BoundingBoxesLMDBDict
 
 Transform = Callable[[Img], Img]
 
@@ -47,7 +48,7 @@ def visualize_predictions(dataset_config: Dict[str, str],
     count = 0
 
     with torch.no_grad():
-        for x, _, indices in loader:
+        for x, _, indices, *_ in loader:
             x_device = [t.to(device) for t in x]
             z = model(x_device)
 
@@ -100,13 +101,13 @@ def visualize_stored_predictions(dataset_config: Dict[str, str],
     x_list = []
     bboxes_list = []
 
-    with LMDBDict(bboxes_path) as bboxes_db:
-        with torch.no_grad():
-            for x, _, indices in loader:
-                for i in range(0, len(indices)):
-                    key = str(int(indices[i]))
+    with LMDBDict(bboxes_path) as lmdb_dict:
+        bboxes_db = BoundingBoxesLMDBDict(lmdb_dict)
 
-                    bboxes = [BoundingBox.decode(b) for b in decode_list(bboxes_db[key], size=BoundingBox.byte_size())]
+        with torch.no_grad():
+            for x, _, indices, paths, *_ in loader:
+                for i in range(0, len(indices)):
+                    bboxes = bboxes_db[paths[i]]
                     bboxes = filter_bboxes(bboxes, min_score=min_score, top_bboxes=top_bboxes)
 
                     if nms_threshold is not None:
@@ -143,11 +144,13 @@ def build_bboxes(dataset_config: Dict[str, str],
 
     logger = logging.getLogger(f'{__name__}')
 
-    with LMDBDict(bboxes_path) as bboxes_db:
+    with LMDBDict(bboxes_path) as lmdb_dict:
+        bboxes_db = BoundingBoxesLMDBDict(lmdb_dict)
+
         with tqdm(total=len(loader), disable=not show_progress) as progress_bar:
             progress_bar.set_description(f'Building bboxes')
 
-            for x, _, indices in loader:
+            for x, _, indices, paths, *_ in loader:
                 x = [t.to(device) for t in x]
                 z = model(x)
 
@@ -157,9 +160,7 @@ def build_bboxes(dataset_config: Dict[str, str],
                     bboxes = convert_bboxes(boxes=z_i_cpu['boxes'], labels=z_i_cpu['labels'], scores=z_i_cpu['scores'])
                     bboxes = filter_bboxes(bboxes, categories=airplane_categories)
 
-                    key = str(int(indices[i]))
-                    bboxes_db[key] = encode_list([bbox.encode() for bbox in bboxes], size=BoundingBox.byte_size())
-
-                    logger.info(f'#{key} - {shape(x[i])}:\n' + '\n'.join([f'    {str(bbox)}' for bbox in bboxes]))
+                    bboxes_db[paths[i]] = bboxes
+                    logger.info(f'bounding boxes: #{paths[i]} - {shape(x[i])}:\n' + '\n'.join([f'    {str(bbox)}' for bbox in bboxes]))
 
                 progress_bar.update()

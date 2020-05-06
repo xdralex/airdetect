@@ -173,13 +173,14 @@ def cli_eval(experiment: str, device: int, top: int, metric_name: str, order: st
 
 @click.option('-e', '--experiment', 'experiment', required=True, help='experiment name', type=str)
 @click.option('-d', '--device', 'device', default='0', help='device number (0, 1, ...)', type=int)
+@click.option('-s', '--dataset', 'dataset', required=True, help='dataset name', type=str)
 @click.option('--top', 'top', default=1, help='number of top models to use', type=int)
 @click.option('--metric', 'metric_name', required=True, type=str, help='name of the metric to sort by')
 @click.option('--order', 'order', required=True, type=click.Choice(['asc', 'desc']), help='ascending/descending sort order')
 @click.option('--index', 'index', default=0, type=int, help='model index (0, 1, ...)')
 @click.option('--hide', 'hide', default='experiment,trial,lr_f,lr_t0,lr_w', type=str, help='columns to hide')
 @click.option('--incomplete', 'incomplete', is_flag=True, help='load incomplete trials')
-def cli_build_heatmaps(experiment: str, device: int, top: int, metric_name: str, order: str, index: int, hide: str, incomplete: bool):
+def cli_build_heatmaps(experiment: str, device: int, dataset: str, top: int, metric_name: str, order: str, index: int, hide: str, incomplete: bool):
     def metric_sort(df: pd.DataFrame) -> pd.DataFrame:
         return df.sort_values(by=metric_name, ascending=(order == 'asc'))
 
@@ -207,7 +208,7 @@ def cli_build_heatmaps(experiment: str, device: int, top: int, metric_name: str,
         snapshot_path = CheckpointPattern.path(os.path.join(snapshot_dir, entry.trial), entry.epoch)
 
         print(f'Using trial [{index}]: {entry.trial}')
-        build_heatmaps(dataset_config=config['datasets'][f'train'],
+        build_heatmaps(dataset_config=config['datasets'][dataset],
                        snapshot_path=snapshot_path,
-                       heatmap_path=config['boost']['heatmaps']['train'],
+                       heatmap_path=config['boost']['heatmaps'][dataset],
                        device=device)

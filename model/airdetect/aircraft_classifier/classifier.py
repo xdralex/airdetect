@@ -30,7 +30,7 @@ from wheel5.metering import ReservoirSamplingMeter, ArrayAccumMeter
 from wheel5.metrics import ExactMatchAccuracy, DiceAccuracy
 from wheel5.nn import init_softmax_logits, ParamGroup
 from wheel5.scheduler import WarmupScheduler
-from wheel5.storage import NdArraysStorage
+from wheel5.storage import LMDBDict
 from wheel5.tasks.classification import class_distribution
 from wheel5.tracking import ProbesInterface
 from wheel5.tricks.gradcam import GradCAM, GradCAMpp, logit_to_score
@@ -39,6 +39,7 @@ from wheel5.tricks.moments import moex
 from wheel5.viz import draw_confusion_matrix
 from .util import check_flag
 from ..data import load_classes, ClassifierDatasetConfig, load_classifier_dataset
+from ..storage import HeatmapLMDBDict
 
 
 @dataclass
@@ -237,7 +238,7 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
 
             inter_mode = 'bilinear' if check_flag(self.config.kv, 'x_cut_i') else 'nearest'
 
-            heatmaps = NdArraysStorage.load(self.config.heatmaps_path)
+            heatmaps = HeatmapLMDBDict(LMDBDict(self.config.heatmaps_path))
             train_dataset = ImageHeatmapDataset(train_dataset, heatmaps, inter_mode=inter_mode, name='train-heatmap')
             train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True, name='train-aug1')
             train_dataset = ImageAttentiveCutMixDataset(train_dataset, alpha=cutmix_alpha, q_min=q_min, q_max=q_max, name='train-cutmix')

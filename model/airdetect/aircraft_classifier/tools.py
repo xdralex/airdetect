@@ -1,4 +1,6 @@
+import logging
 import os
+import sys
 from dataclasses import asdict
 from typing import Dict, Optional, Union
 from typing import List, Callable
@@ -14,12 +16,14 @@ from pytorch_lightning.loggers import rank_zero_only
 from torch.nn.functional import log_softmax
 from tqdm import tqdm
 
-from wheel5.storage import NdArraysStorage
+from wheel5.storage import LMDBDict
 from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
+from wheel5.util import shape
 from wheel5.viz import draw_heatmap, HeatmapEntry, HeatmapModeColormap, HeatmapModeBloom
 from wheel5.viz.predictions import draw_classes
 from .classifier import AircraftClassifierConfig, AircraftClassifier
 from ..data import ClassifierDatasetConfig
+from ..storage import HeatmapLMDBDict
 
 Transform = Callable[[Img], Img]
 
@@ -153,31 +157,29 @@ def build_heatmaps(dataset_config: Dict[str, str],
     dataset = model.load_dataset(config=ClassifierDatasetConfig.from_dict(dataset_config))
     loader = model.prepare_grad_loader(dataset)
 
-    heatmaps = {}
-    with tqdm(total=len(loader), disable=not show_progress) as progress_bar:
-        progress_bar.set_description(f'Building heatmaps')
+    logger = logging.getLogger(f'{__name__}')
 
-        for x, y, indices in loader:
-            x = x.to(device)
-            y = y.to(device)
+    with LMDBDict(heatmap_path) as lmdb_dict:
+        heatmap_db = HeatmapLMDBDict(lmdb_dict)
 
-            batch = (x, y, indices)
-            mask = model.introspect_cam(batch, class_selector='true')
+        with tqdm(total=len(loader), disable=not show_progress) as progress_bar:
+            progress_bar.set_description(f'Building heatmaps')
 
-            assert indices.shape[0] == mask.shape[0]
-            mask = mask.cpu().numpy()
+            for x, y, indices, paths, *_ in loader:
+                x = x.to(device)
+                y = y.to(device)
 
-            for i in range(0, indices.shape[0]):
-                index = int(indices[i])
-                heatmaps[str(index)] = mask[i]
+                batch = (x, y, indices)
+                mask = model.introspect_cam(batch, class_selector='true')
 
-            progress_bar.update()
+                assert indices.shape[0] == mask.shape[0]
+                mask = mask.cpu().numpy()
 
-    for i in range(0, len(heatmaps)):
-        assert str(i) in heatmaps
+                for i in range(0, indices.shape[0]):
+                    heatmap_db[paths[i]] = mask[i]
+                    logger.info(f'heatmap: #{paths[i]} - {shape(mask[i])}')
 
-    storage = NdArraysStorage(heatmaps)
-    storage.save(heatmap_path)
+                progress_bar.update()
 
 
 def eval_blend(dataset_config: Dict[str, str],
