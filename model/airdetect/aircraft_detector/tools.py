@@ -11,7 +11,7 @@ from torch.utils.data import Subset
 from tqdm import tqdm
 
 from wheel5.storage import LMDBDict, encode_list, decode_list
-from wheel5.tasks.detection import BoundingBox, convert_bboxes, filter_bboxes, non_maximum_suppression
+from wheel5.tasks.detection import BoundingBox, convert_bboxes, filter_bboxes, non_maximum_suppression, Rectangle
 from wheel5.util import shape
 from wheel5.viz.predictions import draw_bboxes
 from .detector import AircraftDetector, AircraftDetectorConfig
@@ -79,6 +79,7 @@ def visualize_stored_predictions(dataset_config: Dict[str, str],
                                  nms_threshold: Optional[float] = None,
                                  nms_ranking: str = 'score_sqrt_area',
                                  nms_suppression: str = 'overlap',
+                                 expand_coeff: float = 0.0,
                                  directory: Optional[str] = None) -> Figure:
     config = AircraftDetectorConfig(random_state_seed=42)
     hparams = asdict(config)
@@ -110,6 +111,10 @@ def visualize_stored_predictions(dataset_config: Dict[str, str],
 
                     if nms_threshold is not None:
                         bboxes = non_maximum_suppression(bboxes, nms_threshold, nms_ranking, nms_suppression)
+
+                    _, h, w = x[i].shape
+                    x_i_rect = Rectangle(pt_from=(0, 0), pt_to=(w - 1, h - 1))
+                    bboxes = [bbox.expand(expand_coeff).intersection(x_i_rect) for bbox in bboxes]
 
                     x_list.append(x[i])
                     bboxes_list.append(bboxes)
