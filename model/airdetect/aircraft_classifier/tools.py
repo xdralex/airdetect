@@ -162,7 +162,7 @@ def build_heatmaps(dataset_config: Dict[str, str],
     with LMDBDict(heatmap_path) as lmdb_dict:
         heatmap_db = HeatmapLMDBDict(lmdb_dict)
 
-        with tqdm(total=len(loader), disable=not show_progress) as progress_bar:
+        with tqdm(total=len(loader), disable=not show_progress, file=sys.stdout) as progress_bar:
             progress_bar.set_description(f'Building heatmaps')
 
             for x, y, indices, paths, *_ in loader:
@@ -207,7 +207,7 @@ def eval_blend(dataset_config: Dict[str, str],
 
             z_list = []
             y_list = []
-            with tqdm(total=len(loader), disable=not show_progress) as progress_bar:
+            with tqdm(total=len(loader), disable=not show_progress, file=sys.stdout) as progress_bar:
                 progress_bar.set_description(f'Evaluating model {i + 1}')
 
                 for x, y, *_ in loader:

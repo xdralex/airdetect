@@ -1,4 +1,5 @@
 import logging
+import sys
 from dataclasses import asdict
 from typing import Callable, Optional, List
 from typing import Dict
@@ -147,7 +148,7 @@ def build_bboxes(dataset_config: Dict[str, str],
     with LMDBDict(bboxes_path) as lmdb_dict:
         bboxes_db = BoundingBoxesLMDBDict(lmdb_dict)
 
-        with tqdm(total=len(loader), disable=not show_progress) as progress_bar:
+        with tqdm(total=len(loader), disable=not show_progress, file=sys.stdout) as progress_bar:
             progress_bar.set_description(f'Building bboxes')
 
             for x, _, indices, paths, *_ in loader:

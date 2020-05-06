@@ -57,7 +57,7 @@ logging:
       class: logging.StreamHandler
       formatter: console_formatter
       level: INFO
-      stream: ext://sys.stdout
+      stream: ext://sys.stderr
 
   root:
     level: INFO

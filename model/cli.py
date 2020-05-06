@@ -1,5 +1,7 @@
 import os
 import re
+import sys
+import traceback
 
 import click
 import pandas as pd
@@ -172,19 +174,22 @@ def cli():
 
 
 if __name__ == "__main__":
-    cli.add_command(click.command(name='cls-trial')(cls_trial))
-    cli.add_command(click.command(name='cls-search')(cls_search))
-    cli.add_command(click.command(name='cls-eval')(cls_eval))
-    cli.add_command(click.command(name='cls-build-heatmaps')(cls_build_heatmaps))
+    try:
+        cli.add_command(click.command(name='cls-trial')(cls_trial))
+        cli.add_command(click.command(name='cls-search')(cls_search))
+        cli.add_command(click.command(name='cls-eval')(cls_eval))
+        cli.add_command(click.command(name='cls-build-heatmaps')(cls_build_heatmaps))
 
-    cli.add_command(click.command(name='cls-build-bboxes')(cli_build_bboxes))
+        cli.add_command(click.command(name='cls-build-bboxes')(cli_build_bboxes))
 
-    cli.add_command(cli_introspect_nn)
+        cli.add_command(cli_introspect_nn)
 
-    cli.add_command(cli_list_experiments)
-    cli.add_command(cli_list_trials)
-    cli.add_command(cli_dump_trial)
+        cli.add_command(cli_list_experiments)
+        cli.add_command(cli_list_trials)
+        cli.add_command(cli_dump_trial)
 
-    cli.add_command(cli_tensorboard)
+        cli.add_command(cli_tensorboard)
 
-    cli()
+        cli()
+    except Exception as e:
+        traceback.print_exc(file=sys.stdout)
