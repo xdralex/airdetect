@@ -33,8 +33,6 @@ datasets:
 boost:
   heatmaps:
     train: /data/nvme/run/airdetect/boost/heatmaps/train
-    reallife: /data/nvme/run/airdetect/boost/bboxes/reallife
-    debug: /data/nvme/run/airdetect/boost/bboxes/debug
 
   bboxes:
     train: /data/nvme/run/airdetect/boost/bboxes/train

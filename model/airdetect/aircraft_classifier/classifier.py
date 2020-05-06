@@ -530,7 +530,8 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
         return figures
 
     def introspect_cam(self,
-                       batch,
+                       x: torch.Tensor,
+                       y: torch.Tensor,
                        class_selector: str,
                        layer: Optional[nn.Module] = None,
                        cam_generator: str = 'gradcampp',
@@ -539,7 +540,6 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
         if layer is None:
             layer = self.model.layer4
 
-        x, y, *_ = batch
         _, _, h, w = x.shape
 
         if class_selector == 'pred':

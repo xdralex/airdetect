@@ -16,15 +16,14 @@ from pytorch_lightning.loggers import rank_zero_only
 from torch.nn.functional import log_softmax
 from tqdm import tqdm
 
+from wheel5.storage import HeatmapLMDBDict
 from wheel5.storage import LMDBDict
 from wheel5.tracking import Tracker, TensorboardLogging, StatisticsTracking, CheckpointPattern
 from wheel5.util import shape
 from wheel5.viz import draw_heatmap, HeatmapEntry, HeatmapModeColormap, HeatmapModeBloom
 from wheel5.viz.predictions import draw_classes
-from wheel5.storage import HeatmapLMDBDict
 from .classifier import AircraftClassifierConfig, AircraftClassifier
 from ..data import ClassifierDatasetConfig
-
 
 Transform = Callable[[Img], Img]
 
@@ -120,19 +119,17 @@ def visualize_heatmap(dataset_config: Dict[str, str],
     y_probs_hat = torch.exp(log_softmax(z, dim=1))
     y_class_hat = torch.argmax(y_probs_hat, dim=1)
 
-    batch = (x, y, None)
-
     x_sample = torch.stack([model.sample_transform(x[i]) for i in range(0, samples)])
 
     if no_actual:
-        mask_hat = model.introspect_cam(batch, class_selector='pred', inter_mode=inter_mode, cutoff_ratio=cutoff_ratio)
+        mask_hat = model.introspect_cam(x, y, class_selector='pred', inter_mode=inter_mode, cutoff_ratio=cutoff_ratio)
         entries = [
             HeatmapEntry('predicted', y_class_hat, mask_hat, mode=HeatmapModeColormap()),
             HeatmapEntry('predicted', y_class_hat, mask_hat, mode=HeatmapModeBloom())
         ]
     else:
-        mask = model.introspect_cam(batch, class_selector='true', inter_mode=inter_mode, cutoff_ratio=cutoff_ratio)
-        mask_hat = model.introspect_cam(batch, class_selector='pred', inter_mode=inter_mode, cutoff_ratio=cutoff_ratio)
+        mask = model.introspect_cam(x, y, class_selector='true', inter_mode=inter_mode, cutoff_ratio=cutoff_ratio)
+        mask_hat = model.introspect_cam(x, y, class_selector='pred', inter_mode=inter_mode, cutoff_ratio=cutoff_ratio)
         entries = [
             HeatmapEntry('actual', y, mask, mode=HeatmapModeColormap()),
             HeatmapEntry('predicted', y_class_hat, mask_hat, mode=HeatmapModeColormap()),
@@ -170,8 +167,7 @@ def build_heatmaps(dataset_config: Dict[str, str],
                 x = x.to(device)
                 y = y.to(device)
 
-                batch = (x, y, indices)
-                mask = model.introspect_cam(batch, class_selector='true')
+                mask = model.introspect_cam(x, y, class_selector='true')
 
                 assert indices.shape[0] == mask.shape[0]
                 mask = mask.cpu().numpy()
