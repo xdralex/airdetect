@@ -36,6 +36,8 @@ boost:
 
   bboxes:
     train: /data/nvme/run/airdetect/boost/bboxes/train
+    public_test: /data/nvme/run/airdetect/boost/bboxes/public_test
+    private_test: /data/nvme/run/airdetect/boost/bboxes/private_test
     reallife: /data/nvme/run/airdetect/boost/bboxes/reallife
     debug: /data/nvme/run/airdetect/boost/bboxes/debug
 

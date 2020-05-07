@@ -93,18 +93,6 @@ def load_classifier_dataset(config: ClassifierDatasetConfig,
         df_metadata = df_metadata[df_metadata['target'].notnull()]
         df_metadata['target'] = df_metadata['target'].astype('int64')
 
-        if config.annotations is not None:
-            df_annotations = pd.read_csv(filepath_or_buffer=config.annotations, sep=',', header=0)
-
-            categories_dict = {}
-            for row in df_annotations.itertuples():
-                categories_dict[row.path] = row.category
-
-            df_metadata['category'] = df_metadata['path'].map(lambda path: categories_dict[path])
-
-            df_metadata = df_metadata[df_metadata['category'] == 'normal']
-            df_metadata = df_metadata.drop(columns=['name', 'category'])
-
     if config.lmdb_dir is None:
         return SimpleImageClassificationDataset(df_metadata,
                                                 image_dir=config.image_dir,

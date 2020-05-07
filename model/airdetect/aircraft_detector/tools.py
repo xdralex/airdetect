@@ -22,13 +22,13 @@ from ..data import DetectorDatasetConfig, load_detector_dataset
 Transform = Callable[[Img], Img]
 
 
-def visualize_predictions(dataset_config: Dict[str, str],
-                          device: int,
-                          samples: int,
-                          min_score: float = 0.0,
-                          top_bboxes: Optional[int] = None,
-                          categories: Optional[List[str]] = None,
-                          directory: Optional[str] = None) -> Figure:
+def visualize_predicted_bboxes(dataset_config: Dict[str, str],
+                               device: int,
+                               samples: int,
+                               min_score: float = 0.0,
+                               top_bboxes: Optional[int] = None,
+                               categories: Optional[List[str]] = None,
+                               directory: Optional[str] = None) -> Figure:
     device = torch.device(f'cuda:{device}')
 
     config = AircraftDetectorConfig(random_state_seed=42)
@@ -72,17 +72,17 @@ def visualize_predictions(dataset_config: Dict[str, str],
     draw_bboxes(x, bboxes=bboxes, categories=model.categories, directory=directory)
 
 
-def visualize_stored_predictions(dataset_config: Dict[str, str],
-                                 bboxes_path: str,
-                                 samples: int,
-                                 randomize: bool = False,
-                                 min_score: float = 0.0,
-                                 top_bboxes: Optional[int] = None,
-                                 nms_threshold: Optional[float] = None,
-                                 nms_ranking: str = 'score_sqrt_area',
-                                 nms_suppression: str = 'overlap',
-                                 expand_coeff: float = 0.0,
-                                 directory: Optional[str] = None) -> Figure:
+def visualize_stored_bboxes(dataset_config: Dict[str, str],
+                            bboxes_path: str,
+                            samples: int,
+                            randomize: bool = False,
+                            min_score: float = 0.0,
+                            top_bboxes: Optional[int] = None,
+                            nms_threshold: Optional[float] = None,
+                            nms_ranking: str = 'score_sqrt_area',
+                            nms_suppression: str = 'overlap',
+                            expand_coeff: float = 0.0,
+                            directory: Optional[str] = None) -> Figure:
     config = AircraftDetectorConfig(random_state_seed=42)
     hparams = asdict(config)
 
@@ -106,8 +106,8 @@ def visualize_stored_predictions(dataset_config: Dict[str, str],
         bboxes_db = BoundingBoxesLMDBDict(lmdb_dict)
 
         with torch.no_grad():
-            for x, _, indices, paths, *_ in loader:
-                for i in range(0, len(indices)):
+            for x, _, _, paths, *_ in loader:
+                for i in range(0, len(paths)):
                     bboxes = bboxes_db[paths[i]]
                     bboxes = filter_bboxes(bboxes, min_score=min_score, top_bboxes=top_bboxes)
 
@@ -122,6 +122,18 @@ def visualize_stored_predictions(dataset_config: Dict[str, str],
                     bboxes_list.append(bboxes)
 
     draw_bboxes(x_list, bboxes=bboxes_list, categories=model.categories, directory=directory)
+
+
+def find_empty_bboxes(bboxes_path: str) -> List[str]:
+    bad_paths = []
+
+    with LMDBDict(bboxes_path) as lmdb_dict:
+        bboxes_db = BoundingBoxesLMDBDict(lmdb_dict)
+        for path, bboxes in bboxes_db.items():
+            if len(bboxes) == 0:
+                bad_paths.append(path)
+
+    return bad_paths
 
 
 def build_bboxes(dataset_config: Dict[str, str],
