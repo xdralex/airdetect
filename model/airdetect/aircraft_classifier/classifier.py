@@ -238,8 +238,8 @@ class AircraftClassifier(pl.LightningModule, ProbesInterface):
 
             inter_mode = 'bilinear' if check_flag(self.config.kv, 'x_cut_i') else 'nearest'
 
-            heatmaps = HeatmapLMDBDict(LMDBDict(self.config.heatmaps_path))
-            train_dataset = ImageHeatmapDataset(train_dataset, heatmaps, inter_mode=inter_mode, name='train-heatmap')
+            heatmaps_db = HeatmapLMDBDict(LMDBDict(self.config.heatmaps_path))
+            train_dataset = ImageHeatmapDataset(train_dataset, heatmaps_db, inter_mode=inter_mode, name='train-heatmap')
             train_dataset = AlbumentationsDataset(train_dataset, self.train_transform_mix, use_mask=True, name='train-aug1')
             train_dataset = ImageAttentiveCutMixDataset(train_dataset, alpha=cutmix_alpha, q_min=q_min, q_max=q_max, name='train-cutmix')
         elif selector == 'mixup':

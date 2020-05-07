@@ -1,4 +1,6 @@
 import logging
+import os
+import pathlib
 import sys
 from dataclasses import asdict
 from typing import Callable, Optional, List
@@ -6,16 +8,19 @@ from typing import Dict
 
 import numpy as np
 import torch
+from PIL import Image
 from PIL.Image import Image as Img
 from matplotlib.figure import Figure
 from torch.utils.data import Subset
 from tqdm import tqdm
+import albumentations as albu
 
 from wheel5.storage import LMDBDict
 from wheel5.tasks.detection import convert_bboxes, filter_bboxes, non_maximum_suppression, Rectangle
 from wheel5.util import shape
 from wheel5.viz.predictions import draw_bboxes
 from wheel5.storage import BoundingBoxesLMDBDict
+import wheel5.transforms.albumentations as albu_ext
 from .detector import AircraftDetector, AircraftDetectorConfig
 from ..data import DetectorDatasetConfig, load_detector_dataset
 
@@ -175,5 +180,52 @@ def build_bboxes(dataset_config: Dict[str, str],
 
                     bboxes_db[paths[i]] = bboxes
                     logger.info(f'bounding boxes: #{paths[i]} - {shape(x[i])}:\n' + '\n'.join([f'    {str(bbox)}' for bbox in bboxes]))
+
+                progress_bar.update()
+
+
+def crop_by_bboxes(image_dir_in,
+                   image_dir_out,
+                   bboxes_path: str,
+                   expand_coeff: float = 0.25,
+                   min_score: float = 0.7,
+                   nms_threshold: float = 0.5,
+                   nms_ranking: str = 'score_sqrt_area',
+                   nms_suppression: str = 'overlap',
+                   show_progress: bool = True):
+
+    pathlib.Path(image_dir_out).mkdir(parents=True, exist_ok=False)
+
+    paths = list(os.listdir(image_dir_in))
+
+    with LMDBDict(bboxes_path) as lmdb_dict:
+        bboxes_db = BoundingBoxesLMDBDict(lmdb_dict)
+
+        with tqdm(total=len(paths), disable=not show_progress, file=sys.stdout) as progress_bar:
+            progress_bar.set_description(f'Cropping images {image_dir_in} => {image_dir_out}')
+
+            for path in paths:
+                img = Image.open(os.path.join(image_dir_in, path))
+
+                w, h = img.size
+                img_rect = Rectangle(pt_from=(0, 0), pt_to=(w - 1, h - 1))
+
+                bboxes = bboxes_db[path]
+                bboxes = filter_bboxes(bboxes, min_score=min_score)
+                bboxes = non_maximum_suppression(bboxes, nms_threshold, nms_ranking, nms_suppression)
+
+                if len(bboxes) > 0:
+                    bbox = bboxes[0]
+                    bbox = bbox.expand(expand_coeff)
+                    bbox = bbox.intersection(img_rect)
+
+                    transform = albu.Crop(x_min=bbox.x0, y_min=bbox.y0, x_max=bbox.x1, y_max=bbox.y1, always_apply=True)
+                else:
+                    transform = albu_ext.Identity()
+
+                augmented = transform(image=np.array(img))
+                img_aug = Image.fromarray(augmented['image'])
+
+                img_aug.save(os.path.join(image_dir_out, path))
 
                 progress_bar.update()
